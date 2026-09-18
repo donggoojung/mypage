@@ -98,7 +98,18 @@ class ABCMartScraper(BaseScraper):
 
                 # PRD 2.2: 정규분포형 가변 딜레이(1.5~4.2초)로 일정 주기 요청 패턴을 피한다.
                 await asyncio.sleep(random.uniform(self.min_delay, self.max_delay))
-                await page.goto(product_url, wait_until="networkidle", timeout=30000)
+
+                # "networkidle"은 광고/채팅위젯/재고 폴링 때문에 실사이트에서는 끝까지
+                # 도달하지 못하고 무한 대기로 이어질 수 있다 — 기본 HTML만 빠르게 받는다.
+                await page.goto(product_url, wait_until="domcontentloaded", timeout=20000)
+
+                # 이 사이트는 React/Vue CSR 구조(PRD 2.1)라 상품 데이터가 XHR로 뒤늦게
+                # 채워진다. JSON-LD나 가격 요소가 나타날 때까지 최대 10초만 별도로 기다리고,
+                # 그래도 안 나타나면(위젯/폴링으로 계속 바쁜 상태) 있는 그대로 파싱을 시도한다.
+                try:
+                    await page.wait_for_selector(f"{SELECTOR_JSON_LD}, {SELECTOR_PRICE}", timeout=10000)
+                except Exception:
+                    pass
 
                 return await self._parse_product_page(page, product_url)
             finally:
