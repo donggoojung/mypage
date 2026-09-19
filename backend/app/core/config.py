@@ -21,10 +21,14 @@ class Settings(BaseSettings):
     use_mock_messaging: bool = True
     use_mock_rpa: bool = True
     use_mock_storage: bool = True
+    use_mock_price_checkers: bool = True
 
     # 오픈마켓 API 키
     naver_client_id: str = ""
     naver_client_secret: str = ""
+    # 네이버 쇼핑검색 오픈API 전용 키 (Commerce API 키와 별개 — https://developers.naver.com/apps 에서 발급)
+    naver_search_client_id: str = ""
+    naver_search_client_secret: str = ""
     coupang_access_key: str = ""
     coupang_secret_key: str = ""
     coupang_vendor_id: str = ""

@@ -15,37 +15,13 @@
 
 import asyncio
 import json
-import os
 import random
 import re
 
 from playwright.async_api import Page, async_playwright
 
 from app.integrations.scrapers.base import BaseScraper, ScrapedProduct
-
-# 이 환경에는 Playwright 브라우저가 /opt/pw-browsers 에 사전 설치되어 있다.
-# `playwright install`로 재다운로드하지 않고, 있으면 그 경로를 그대로 사용한다.
-_PREINSTALLED_CHROMIUM = "/opt/pw-browsers/chromium"
-
-# 실제 데스크톱 크롬 UA — 최신 버전 번호는 주기적으로 갱신 필요.
-USER_AGENT = (
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36"
-)
-
-# PRD 2.2: navigator.webdriver 등 헤드리스 탐지 핵심 파라미터 제거.
-STEALTH_INIT_SCRIPT = """
-Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
-Object.defineProperty(navigator, 'languages', { get: () => ['ko-KR', 'ko', 'en-US', 'en'] });
-Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
-window.chrome = { runtime: {} };
-const originalQuery = window.navigator.permissions.query;
-window.navigator.permissions.query = (parameters) => (
-    parameters.name === 'notifications'
-        ? Promise.resolve({ state: Notification.permission })
-        : originalQuery(parameters)
-);
-"""
+from app.integrations.scrapers.stealth import STEALTH_INIT_SCRIPT, chromium_launch_kwargs, new_context_kwargs
 
 # 나이키 CW2288-111, 아디다스 S28216-62 형태(영문 1~3자 + 숫자 3~6자리 - 숫자 2~5자리)의
 # 품번 정규식 (PRD 2.1). 페이지에 "스타일코드" 라벨이 없을 때의 최후 폴백으로만 쓴다.
@@ -81,22 +57,10 @@ class ABCMartScraper(BaseScraper):
 
     async def fetch_product_by_url(self, product_url: str) -> ScrapedProduct:
         """상품 상세 페이지 URL을 직접 열어 데이터를 파싱한다."""
-        launch_kwargs = {
-            "headless": self.headless,
-            "args": ["--disable-blink-features=AutomationControlled"],
-        }
-        if os.path.exists(_PREINSTALLED_CHROMIUM):
-            launch_kwargs["executable_path"] = _PREINSTALLED_CHROMIUM
-
         async with async_playwright() as playwright:
-            browser = await playwright.chromium.launch(**launch_kwargs)
+            browser = await playwright.chromium.launch(**chromium_launch_kwargs(self.headless))
             try:
-                context = await browser.new_context(
-                    user_agent=USER_AGENT,
-                    viewport={"width": 1366, "height": 768},
-                    locale="ko-KR",
-                    timezone_id="Asia/Seoul",
-                )
+                context = await browser.new_context(**new_context_kwargs())
                 await context.add_init_script(STEALTH_INIT_SCRIPT)
                 page = await context.new_page()
 
