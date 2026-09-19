@@ -21,7 +21,10 @@ class Settings(BaseSettings):
     use_mock_messaging: bool = True
     use_mock_rpa: bool = True
     use_mock_storage: bool = True
-    use_mock_price_checkers: bool = True
+    # 경쟁가 조회는 플랫폼별로 검증 상태가 달라(네이버=공식 API, 쿠팡=미검증 스크래핑)
+    # 하나로 묶지 않고 따로 켜고 끌 수 있게 분리한다.
+    use_mock_naver_price_checker: bool = True
+    use_mock_coupang_price_checker: bool = True
 
     # 오픈마켓 API 키
     naver_client_id: str = ""

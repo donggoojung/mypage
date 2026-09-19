@@ -9,7 +9,7 @@ import re
 
 import httpx
 
-from app.core.config import Settings, get_settings
+from app.core.config import Settings
 from app.integrations.markets.price_checker_base import BaseCompetitorPriceChecker, CompetitorListing
 from app.models.enums import MarketType
 
@@ -73,10 +73,3 @@ class MockNaverShoppingPriceChecker(BaseCompetitorPriceChecker):
             product_url="https://shopping.naver.com/mock/product/1",
             mall_name=self._mall_name,
         )
-
-
-def get_naver_price_checker() -> BaseCompetitorPriceChecker:
-    settings = get_settings()
-    if settings.use_mock_price_checkers:
-        return MockNaverShoppingPriceChecker()
-    return NaverShoppingPriceChecker(settings)
