@@ -1,17 +1,16 @@
 """ABC마트 상품 상세페이지 실크롤러 (PRD 2.1, 2.2).
 
-주의 — 셀렉터 미검증 (2026-09-18 기준):
-이 코드는 abcmart.com으로의 아웃바운드 네트워크 접속이 차단된 환경에서 작성되어,
-실제 페이지 구조로 CSS 셀렉터를 검증하지 못했다. 아래 두 단계로 데이터를 추출한다.
+데이터 추출 우선순위:
+  1순위: `<script type="application/ld+json">`에 담긴 schema.org Product 구조화 데이터
+         (브랜드/상품명/가격 — 실사이트에서 확인됨, 2026-09-19).
+  2순위: 1순위가 없을 때 DOM 셀렉터(SELECTOR_*)로 폴백.
 
-  1순위: `<script type="application/ld+json">`에 담긴 schema.org Product 구조화 데이터.
-         (국내 쇼핑몰 다수가 검색엔진 노출을 위해 이 형식을 사용하며, 사이트 리뉴얼에도
-         비교적 안정적이라 우선 시도한다.)
-  2순위: 1순위가 없을 때 DOM 셀렉터(SELECTOR_*)로 폴백. 이 상수들은 실사이트에서
-         브라우저 개발자도구(F12) → Elements 탭으로 정확한 값을 확인해 채워야 한다.
+품번(스타일코드)은 상세 페이지 상단에 "스타일코드 : S28216-62" 형태로 라벨과 함께
+명시되어 있어(실사이트 확인됨), 정규식 추측 대신 이 라벨을 페이지 텍스트에서 직접 찾는다.
+사이즈 선택은 `ul.size-list` 안의 `button.btn-prod-size` 구조로 확인됨(실사이트 확인됨).
 
-사용자 PC(로컬)에서 `python scripts/test_scraper_margin.py <실제 상품 URL>` 로 실행해보고,
-파싱이 비어 나오면 SELECTOR_* 값을 실제 사이트에 맞게 수정한다.
+사이트 구조는 바뀔 수 있으므로, `python scripts/test_scraper_margin.py <실제 상품 URL>` 로
+주기적으로 재검증하고 파싱이 비면 SELECTOR_* 값을 다시 확인한다.
 """
 
 import asyncio
@@ -48,16 +47,21 @@ window.navigator.permissions.query = (parameters) => (
 );
 """
 
-# 나이키 CW2288-111 형태(영문 1~3자 + 숫자 3~4자리 - 숫자 2~5자리)의 품번 정규식 (PRD 2.1).
-STYLE_CODE_PATTERN = re.compile(r"\b[A-Z]{1,3}\d{3,4}-\d{2,5}\b")
+# 나이키 CW2288-111, 아디다스 S28216-62 형태(영문 1~3자 + 숫자 3~6자리 - 숫자 2~5자리)의
+# 품번 정규식 (PRD 2.1). 페이지에 "스타일코드" 라벨이 없을 때의 최후 폴백으로만 쓴다.
+STYLE_CODE_PATTERN = re.compile(r"\b[A-Z]{1,3}\d{3,6}-\d{2,5}\b")
+# 2026-09-19 실사이트(abcmart.a-rt.com) 개발자도구로 확인: 상세 페이지 상단에
+# "스타일코드 : S28216-62" 형태로 라벨과 함께 명시된다. 이게 정규식 추측보다 훨씬 안정적이라
+# 페이지 텍스트에서 이 라벨을 직접 찾는 것을 최우선으로 시도한다.
+STYLE_CODE_LABEL_PATTERN = re.compile(r"스타일코드\s*[:：]\s*(\S+)")
 
-# --- TODO: 아래 셀렉터는 실사이트 검증이 필요한 플레이스홀더다 --------------------
+# 2026-09-19 실사이트 개발자도구로 검증된 셀렉터.
 SELECTOR_JSON_LD = 'script[type="application/ld+json"]'
 SELECTOR_BRAND = ".prod-brand, .brand-name"
 SELECTOR_PRODUCT_NAME = ".prod-name, .goods-name, h1"
 SELECTOR_PRICE = ".prod-price .price, .sale-price"
-SELECTOR_SIZE_OPTIONS = ".size-option li, .option-size li, [data-option-type='size'] li"
-# ---------------------------------------------------------------------------------
+# 실사이트 구조: <ul class="size-list"><li>...<button class="btn-prod-size">260</button></li></ul>
+SELECTOR_SIZE_OPTIONS = ".size-list .btn-prod-size, .size-option li, .option-size li"
 
 
 class ABCMartScraper(BaseScraper):
@@ -131,7 +135,12 @@ class ABCMartScraper(BaseScraper):
             product_name = await self._safe_text(page, SELECTOR_PRODUCT_NAME)
             price = self._parse_price(await self._safe_text(page, SELECTOR_PRICE))
 
-        style_code = self._extract_style_code(product_name) or self._extract_style_code(product_url) or ""
+        style_code = (
+            await self._extract_style_code_from_page_text(page)
+            or self._extract_style_code(product_name)
+            or self._extract_style_code(product_url)
+            or ""
+        )
         size_stock = await self._extract_size_stock(page)
 
         return ScrapedProduct(
@@ -179,11 +188,26 @@ class ABCMartScraper(BaseScraper):
                 if not label:
                     continue
                 class_attr = (await option.get_attribute("class")) or ""
-                is_sold_out = "disabled" in class_attr or "soldout" in class_attr.lower()
+                disabled_attr = await option.get_attribute("disabled")
+                is_sold_out = (
+                    disabled_attr is not None
+                    or "disabled" in class_attr
+                    or "soldout" in class_attr.lower()
+                    or "sold-out" in class_attr.lower()
+                )
                 size_stock[label] = {"stock": 0 if is_sold_out else None, "is_sold_out": is_sold_out}
         except Exception:
             pass
         return size_stock
+
+    async def _extract_style_code_from_page_text(self, page: Page) -> str | None:
+        """ABC마트 상세 페이지에 "스타일코드 : S28216-62" 형태로 명시된 라벨을 직접 찾는다."""
+        try:
+            body_text = await page.locator("body").inner_text(timeout=3000)
+        except Exception:
+            return None
+        match = STYLE_CODE_LABEL_PATTERN.search(body_text)
+        return match.group(1) if match else None
 
     @staticmethod
     def _extract_style_code(text: str) -> str | None:
