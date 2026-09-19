@@ -29,6 +29,7 @@ async def test_parses_json_ld_product_data():
     assert product.brand_name == "나이키"
     assert product.style_code == "CW2288-111"
     assert product.price == 139000.0
+    assert product.image_url == "https://mock.abcmart.example.com/images/CW2288-111.jpg"
     assert product.size_stock["250"]["is_sold_out"] is False
     assert product.size_stock["260"]["is_sold_out"] is True
     assert product.size_stock["270"]["is_sold_out"] is False

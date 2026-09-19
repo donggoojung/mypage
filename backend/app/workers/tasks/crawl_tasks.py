@@ -45,6 +45,7 @@ def crawl_and_upsert_product(style_code: str, source_platform: str = SourcePlatf
             session.add(mapping)
 
         mapping.source_url = scraped.source_url
+        mapping.source_image_url = scraped.image_url or None
         mapping.source_price = scraped.price
         mapping.size_stock_json = scraped.size_stock
         mapping.last_checked_at = datetime.now(UTC)

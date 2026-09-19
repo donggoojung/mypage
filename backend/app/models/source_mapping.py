@@ -19,6 +19,7 @@ class SourceMapping(Base, TimestampMixin):
     product_id: Mapped[int] = mapped_column(ForeignKey("master_products.product_id"), nullable=False, index=True)
     source_platform: Mapped[SourcePlatform] = mapped_column(SAEnum(SourcePlatform), nullable=False)
     source_url: Mapped[str] = mapped_column(String(1024), nullable=False)
+    source_image_url: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     source_price: Mapped[float] = mapped_column(Numeric(10, 2), nullable=False)
     # 예: {"250": {"stock": 3, "is_sold_out": false}, "260": {"stock": 0, "is_sold_out": true}}
     size_stock_json: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)

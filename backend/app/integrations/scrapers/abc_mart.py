@@ -94,10 +94,13 @@ class ABCMartScraper(BaseScraper):
             if isinstance(offers, list):
                 offers = offers[0] if offers else {}
             price = self._parse_price(offers.get("price"))
+            image = product_data.get("image")
+            image_url = (image[0] if isinstance(image, list) and image else image) or ""
         else:
             brand_name = await self._safe_text(page, SELECTOR_BRAND)
             product_name = await self._safe_text(page, SELECTOR_PRODUCT_NAME)
             price = self._parse_price(await self._safe_text(page, SELECTOR_PRICE))
+            image_url = ""
 
         style_code = (
             await self._extract_style_code_from_page_text(page)
@@ -113,6 +116,7 @@ class ABCMartScraper(BaseScraper):
             product_name=product_name,
             source_url=product_url,
             price=price,
+            image_url=image_url,
             size_stock=size_stock,
             raw_specs={},
         )

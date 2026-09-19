@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>{{ brand_name }} {{ product_name }}</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    width: 860px;
+    font-family: "Malgun Gothic", "Apple SD Gothic Neo", sans-serif;
+    color: #222;
+    background: #ffffff;
+  }
+  .header { padding: 40px 50px 20px; text-align: center; }
+  .brand { font-size: 16px; letter-spacing: 2px; color: #888; text-transform: uppercase; }
+  .product-name { font-size: 28px; font-weight: 700; margin-top: 8px; }
+  .style-code { font-size: 13px; color: #999; margin-top: 6px; }
+
+  .hero { width: 860px; }
+  .hero img { display: block; width: 860px; height: auto; }
+
+  .section { padding: 36px 50px; border-top: 1px solid #eee; }
+  .section-title { font-size: 20px; font-weight: 700; margin-bottom: 18px; }
+
+  table.spec-table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  table.spec-table th, table.spec-table td {
+    text-align: left; padding: 10px 12px; border-bottom: 1px solid #eee;
+  }
+  table.spec-table th { width: 160px; color: #666; background: #fafafa; font-weight: 600; }
+
+  table.size-table { width: 100%; border-collapse: collapse; font-size: 13px; text-align: center; }
+  table.size-table th, table.size-table td { padding: 10px 6px; border: 1px solid #e5e5e5; }
+  table.size-table th { background: #fafafa; font-weight: 600; }
+  .sold-out { color: #bbb; text-decoration: line-through; }
+
+  .notice-box {
+    background: #f7f7f7; border-radius: 8px; padding: 20px 24px; font-size: 13px;
+    line-height: 1.7; color: #555; white-space: pre-line;
+  }
+  .footer { padding: 30px 50px 50px; text-align: center; font-size: 12px; color: #aaa; }
+</style>
+</head>
+<body>
+  <div class="header">
+    <div class="brand">{{ brand_name }}</div>
+    <div class="product-name">{{ product_name }}</div>
+    <div class="style-code">품번(Style Code): {{ style_code }}</div>
+  </div>
+
+  <div class="hero">
+    <img src="{{ hero_image_data_uri }}" alt="{{ product_name }}">
+  </div>
+
+  <div class="section">
+    <div class="section-title">제품 스펙</div>
+    <table class="spec-table">
+      {% for label, value in specs %}
+      <tr><th>{{ label }}</th><td>{{ value }}</td></tr>
+      {% endfor %}
+    </table>
+  </div>
+
+  <div class="section">
+    <div class="section-title">사이즈 가이드</div>
+    <table class="size-table">
+      <tr>
+        {% for size, info in size_stock.items() %}
+        <th>{{ size }}</th>
+        {% endfor %}
+      </tr>
+      <tr>
+        {% for size, info in size_stock.items() %}
+        <td class="{{ 'sold-out' if info.is_sold_out else '' }}">
+          {{ '품절' if info.is_sold_out else '구매가능' }}
+        </td>
+        {% endfor %}
+      </tr>
+    </table>
+  </div>
+
+  <div class="section">
+    <div class="section-title">정품 보증 안내</div>
+    <div class="notice-box">{{ warranty_notice }}</div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">배송 및 교환·반품 안내</div>
+    <div class="notice-box">{{ shipping_notice }}</div>
+  </div>
+
+  <div class="footer">본 상세페이지의 이미지는 AI로 재생성된 이미지이며, 실제 제품과 색감 차이가 있을 수 있습니다.</div>
+</body>
+</html>

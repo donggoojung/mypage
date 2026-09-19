@@ -11,6 +11,7 @@ class ScrapedProduct:
     product_name: str
     source_url: str
     price: float
+    image_url: str = ""
     # 예: {"250": {"stock": 3, "is_sold_out": False}, "260": {"stock": 0, "is_sold_out": True}}
     size_stock: dict[str, dict] = field(default_factory=dict)
     raw_specs: dict = field(default_factory=dict)
