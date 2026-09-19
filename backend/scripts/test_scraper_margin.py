@@ -36,7 +36,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--fixed-margin", type=Decimal, default=Decimal("5000"), help="고정 마진 (기본 5000원)")
     parser.add_argument(
-        "--target-margin-rate", type=Decimal, default=Decimal("0.15"), help="목표 변동 마진율 (기본 0.15 = 15%%)"
+        "--target-margin-rate", type=Decimal, default=Decimal("0.30"), help="목표 변동 마진율 (기본 0.30 = 30%%)"
     )
     parser.add_argument(
         "--customer-shipping-charge", type=Decimal, default=Decimal("3000"), help="고객 청구 배송비 (기본 3000원)"

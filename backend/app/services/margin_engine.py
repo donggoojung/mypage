@@ -39,7 +39,7 @@ class MarginInputs:
     fixed_margin: Decimal = Decimal("0")
     source_shipping_cost: Decimal = Decimal("0")
     customer_shipping_charge: Decimal = Decimal("0")
-    target_margin_rate: Decimal = Decimal("0.15")
+    target_margin_rate: Decimal = Decimal("0.30")
     effective_vat_rate: Decimal = Decimal("0")
 
 
@@ -72,7 +72,7 @@ def calculate_selling_price_for_platform(
     fixed_margin: Decimal = Decimal("0"),
     source_shipping_cost: Decimal = Decimal("0"),
     customer_shipping_charge: Decimal = Decimal("0"),
-    target_margin_rate: Decimal = Decimal("0.15"),
+    target_margin_rate: Decimal = Decimal("0.30"),
     effective_vat_rate: Decimal = Decimal("0"),
     market_fee_rate: Decimal | None = None,
 ) -> Decimal:
