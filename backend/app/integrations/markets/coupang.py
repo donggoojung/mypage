@@ -33,6 +33,11 @@ from app.models.master_product import MasterProduct
 
 COUPANG_API_HOST = "https://api-gateway.coupang.com"
 PRODUCT_REGISTRATION_PATH = "/v2/providers/seller_api/apis/api/v1/marketplace/seller-products"
+# 주의 — 아래 두 경로/응답 필드명도 실API 미검증이다 (파일 상단 설명 참고).
+# 실제 키로 처음 호출할 때는 반드시 raw 응답을 한번 로그로 찍어 필드명이 맞는지 확인할 것.
+SHIPPING_PLACE_LIST_PATH = "/v2/providers/openapi/apis/api/v4/vendors/{vendor_id}/shipping-place/list"
+RETURN_SHIPPING_CENTER_LIST_PATH = "/v2/providers/openapi/apis/api/v4/vendors/{vendor_id}/returnShippingCenters"
+ORDER_SHEETS_PATH = "/v2/providers/openapi/apis/api/v4/vendors/{vendor_id}/ordersheets"
 
 # --- TODO: 실API 검증이 필요한 상품정보제공고시(신발 카테고리) 기본 항목 ---
 DEFAULT_NOTICE_CATEGORY = "신발"
@@ -233,6 +238,149 @@ class CoupangWingClient:
             response.raise_for_status()
             return response.json()
 
+    async def fetch_outbound_shipping_places(self, vendor_id: str) -> list[dict]:
+        """계정에 등록된 출고지 목록을 조회한다 (상품 등록 시 outboundShippingPlaceCode에 사용)."""
+        if self._use_mock:
+            return [
+                {"outboundShippingPlaceCode": 12345678, "shippingPlaceName": "(Mock) 본사 출고지", "usable": True},
+            ]
+        return await self._real_fetch_shipping_places(vendor_id)
+
+    async def fetch_return_shipping_centers(self, vendor_id: str) -> list[dict]:
+        """계정에 등록된 반품지 목록을 조회한다 (상품 등록 시 returnCenterCode/반품지 주소에 사용)."""
+        if self._use_mock:
+            return [
+                {
+                    "returnCenterCode": "1000274596",
+                    "shippingPlaceName": "(Mock) 본사 반품지",
+                    "usable": True,
+                    "placeAddresses": [
+                        {
+                            "returnZipCode": "12345",
+                            "returnAddress1": "서울시 강남구 테헤란로 1",
+                            "returnAddress2": "101호",
+                            "companyContactNumber": "01012345678",
+                        }
+                    ],
+                },
+            ]
+        return await self._real_fetch_return_shipping_centers(vendor_id)
+
+    async def _real_fetch_shipping_places(self, vendor_id: str) -> list[dict]:
+        path = SHIPPING_PLACE_LIST_PATH.format(vendor_id=vendor_id)
+        query = "?pageNum=1&pageSize=50"
+        headers = _build_authorization_header(
+            method="GET",
+            path=path,
+            access_key=self._settings.coupang_access_key,
+            secret_key=self._settings.coupang_secret_key,
+            query=query,
+        )
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.get(f"{COUPANG_API_HOST}{path}{query}", headers=headers)
+            response.raise_for_status()
+            return response.json().get("content", [])
+
+    async def _real_fetch_return_shipping_centers(self, vendor_id: str) -> list[dict]:
+        path = RETURN_SHIPPING_CENTER_LIST_PATH.format(vendor_id=vendor_id)
+        query = "?pageNum=1&pageSize=50"
+        headers = _build_authorization_header(
+            method="GET",
+            path=path,
+            access_key=self._settings.coupang_access_key,
+            secret_key=self._settings.coupang_secret_key,
+            query=query,
+        )
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.get(f"{COUPANG_API_HOST}{path}{query}", headers=headers)
+            response.raise_for_status()
+            return response.json().get("content", [])
+
+
+    async def fetch_paid_order_sheets(self, vendor_id: str) -> list[dict]:
+        """결제 완료(발송 대상) 상태의 신규 주문 목록을 조회한다 (PRD 5.1 주문 감지).
+
+        각 주문 항목의 `externalVendorSku`는 상품 등록 시 우리가 `{style_code}-{size}`
+        형식으로 직접 채워넣은 값이라(build_seller_product_payload 참고), 이 값을 역으로
+        파싱하면 별도 매핑 테이블 없이 주문 → 마스터상품/사이즈를 바로 연결할 수 있다.
+        """
+        if self._use_mock:
+            return self._mock_paid_order_sheets()
+        return await self._real_fetch_paid_order_sheets(vendor_id)
+
+    @staticmethod
+    def _mock_paid_order_sheets() -> list[dict]:
+        return [
+            {
+                "orderId": 700000001,
+                "paidAt": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%S"),
+                "receiver": {
+                    "name": "홍길동",
+                    "safeNumber": "0501-1234-5678",
+                    "addr1": "서울시 강남구 테헤란로 1",
+                    "addr2": "101호",
+                },
+                "orderItems": [
+                    {
+                        "externalVendorSku": "CW2288-111-250",
+                        "shippingCount": 1,
+                        "salesPrice": 192834,
+                    }
+                ],
+            }
+        ]
+
+    async def _real_fetch_paid_order_sheets(self, vendor_id: str) -> list[dict]:
+        path = ORDER_SHEETS_PATH.format(vendor_id=vendor_id)
+        # status=INSTRUCT: 결제 완료 후 상품 준비(발송) 대기 중인 신규 주문만 조회 (실API 미검증).
+        query = "?status=INSTRUCT"
+        headers = _build_authorization_header(
+            method="GET",
+            path=path,
+            access_key=self._settings.coupang_access_key,
+            secret_key=self._settings.coupang_secret_key,
+            query=query,
+        )
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.get(f"{COUPANG_API_HOST}{path}{query}", headers=headers)
+            response.raise_for_status()
+            return response.json().get("data", [])
+
+
+async def resolve_seller_info(settings: Settings | None = None, use_mock: bool | None = None, vendor_id: str | None = None) -> dict:
+    """출고지/반품지를 쿠팡 API로 직접 조회해, 사용자가 수동 입력하지 않아도 되는
+    `seller_info` 딕셔너리를 자동으로 구성한다 (등록된 것 중 `usable=True`인 첫 번째 항목 사용).
+    """
+    settings = settings or get_settings()
+    vendor_id = vendor_id or settings.coupang_vendor_id
+    client = CoupangWingClient(settings=settings, use_mock=use_mock)
+
+    outbound_places = await client.fetch_outbound_shipping_places(vendor_id)
+    outbound = next((p for p in outbound_places if p.get("usable")), None)
+    if outbound is None:
+        raise CoupangRegistrationError(
+            "사용 가능한(usable) 출고지가 쿠팡 계정에 없습니다. WING 판매자센터에서 출고지를 먼저 등록해주세요."
+        )
+
+    return_centers = await client.fetch_return_shipping_centers(vendor_id)
+    return_center = next((r for r in return_centers if r.get("usable")), None)
+    if return_center is None:
+        raise CoupangRegistrationError(
+            "사용 가능한(usable) 반품지가 쿠팡 계정에 없습니다. WING 판매자센터에서 반품지를 먼저 등록해주세요."
+        )
+    place_address = (return_center.get("placeAddresses") or [{}])[0]
+
+    return {
+        "delivery_company_code": "CJGLS",
+        "outbound_shipping_place_code": str(outbound.get("outboundShippingPlaceCode", "")),
+        "return_center_code": str(return_center.get("returnCenterCode", "")),
+        "return_charge_name": return_center.get("shippingPlaceName", ""),
+        "company_contact_number": place_address.get("companyContactNumber", ""),
+        "return_zip_code": place_address.get("returnZipCode", ""),
+        "return_address": place_address.get("returnAddress1", ""),
+        "return_address_detail": place_address.get("returnAddress2", ""),
+    }
+
 
 def register_product_for_master_product(
     session: Session,
@@ -242,11 +390,14 @@ def register_product_for_master_product(
     size_stock: dict[str, dict],
     use_mock: bool | None = None,
     vendor_id: str | None = None,
+    seller_info: dict | None = None,
 ) -> MarketListing:
     """master_products 1건을 쿠팡에 등록(또는 Mock 검증)하고 market_listings에 결과를 저장한다.
 
     `vendor_id`를 생략하면 설정(`COUPANG_VENDOR_ID`)값을 쓴다 — 테스트에서 실제 계정 없이
     임의의 벤더ID로 페이로드 생성을 검증할 때 override 용도로 쓴다.
+    `seller_info`를 생략하면 출고지/반품지 코드를 쿠팡 API로 직접 조회해 자동으로 채운다
+    (사용자가 WING 판매자센터에서 수동으로 값을 찾아 입력할 필요가 없다).
     """
     settings = get_settings()
     vendor_id = vendor_id or settings.coupang_vendor_id
@@ -262,16 +413,8 @@ def register_product_for_master_product(
             "asset_generation_tasks.generate_assets_for_product를 먼저 실행하세요."
         )
 
-    seller_info = {
-        "delivery_company_code": "CJGLS",
-        "return_center_code": settings.coupang_return_center_code,
-        "return_charge_name": settings.coupang_return_charge_name,
-        "company_contact_number": settings.coupang_company_contact_number,
-        "return_zip_code": settings.coupang_return_zip_code,
-        "return_address": settings.coupang_return_address,
-        "return_address_detail": settings.coupang_return_address_detail,
-        "outbound_shipping_place_code": settings.coupang_outbound_shipping_place_code,
-    }
+    if seller_info is None:
+        seller_info = asyncio.run(resolve_seller_info(settings=settings, use_mock=use_mock, vendor_id=vendor_id))
 
     payload_input = CoupangProductInput(
         style_code=product.style_code,

@@ -15,6 +15,7 @@ from app.integrations.markets.coupang import (
     _generate_hmac_signature,
     build_seller_product_payload,
     register_product_for_master_product,
+    resolve_seller_info,
 )
 from app.models.enums import GenerationStatus, ListingStatus, MarketType
 from app.models.generated_asset import GeneratedAsset
@@ -195,6 +196,44 @@ def test_register_product_for_master_product_upserts_on_second_call(sample_produ
 
     assert first.listing_id == second.listing_id  # 새로 생성이 아니라 기존 행을 갱신
     assert second.selling_price == Decimal("199000")
+
+
+# --- 5. 출고지/반품지 자동조회 검증 -------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_resolve_seller_info_mock_returns_usable_places():
+    seller_info = await resolve_seller_info(use_mock=True, vendor_id="A00123456")
+
+    assert seller_info["outbound_shipping_place_code"] == "12345678"
+    assert seller_info["return_center_code"] == "1000274596"
+    assert seller_info["return_zip_code"] == "12345"
+    assert seller_info["return_address"]
+    assert seller_info["company_contact_number"]
+
+
+@pytest.mark.asyncio
+async def test_fetch_outbound_shipping_places_mock_marks_usable():
+    client = CoupangWingClient(use_mock=True)
+    places = await client.fetch_outbound_shipping_places("A00123456")
+
+    assert places
+    assert all("usable" in place for place in places)
+
+
+def test_register_product_for_master_product_auto_resolves_seller_info(sample_product_with_asset, db_session):
+    """seller_info를 생략하면 출고지/반품지 코드를 쿠팡 API로 자동 조회해서 채워야 한다."""
+    listing = register_product_for_master_product(
+        session=db_session,
+        product_id=sample_product_with_asset.product_id,
+        display_category_code=56137,
+        selling_price=Decimal("192834"),
+        size_stock=SAMPLE_SIZE_STOCK,
+        use_mock=True,
+        vendor_id="A00123456",
+    )
+
+    assert listing.status == ListingStatus.ACTIVE
 
 
 def test_register_product_for_master_product_requires_generated_asset(db_session):

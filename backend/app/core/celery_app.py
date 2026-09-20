@@ -8,7 +8,11 @@ celery_app = Celery(
     "brand_fulfillment",
     broker=settings.celery_broker_url,
     backend=settings.celery_result_backend,
-    include=["app.workers.tasks.crawl_tasks", "app.workers.tasks.asset_generation_tasks"],
+    include=[
+        "app.workers.tasks.crawl_tasks",
+        "app.workers.tasks.asset_generation_tasks",
+        "app.workers.tasks.order_tasks",
+    ],
 )
 
 celery_app.conf.update(

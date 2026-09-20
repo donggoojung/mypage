@@ -35,15 +35,6 @@ class Settings(BaseSettings):
     coupang_access_key: str = ""
     coupang_secret_key: str = ""
     coupang_vendor_id: str = ""
-    # 쿠팡 WING 판매자 계정에 등록된 값 — 코드로 추측할 수 없는 계정 고유 설정값이라
-    # 실제 등록 전 사용자가 WING 판매자센터에서 직접 확인해 채워야 한다.
-    coupang_return_center_code: str = ""
-    coupang_outbound_shipping_place_code: str = ""
-    coupang_return_charge_name: str = ""
-    coupang_company_contact_number: str = ""
-    coupang_return_zip_code: str = ""
-    coupang_return_address: str = ""
-    coupang_return_address_detail: str = ""
     esm_master_id: str = ""
     esm_api_key: str = ""
 

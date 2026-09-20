@@ -1,4 +1,4 @@
-from sqlalchemy import Numeric, String
+from sqlalchemy import ForeignKey, Integer, Numeric, String
 from sqlalchemy import Enum as SAEnum
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -15,12 +15,18 @@ class CustomerOrder(Base, TimestampMixin):
     order_id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     market_type: Mapped[MarketType] = mapped_column(SAEnum(MarketType), nullable=False)
     market_order_id: Mapped[str] = mapped_column(String(128), unique=True, index=True, nullable=False)
+    # 주문서에서 추출한 제조사 품번(마스터 상품) + 사이즈 옵션 (PRD 5.1 "제조사 품번과 사이즈 옵션을 추출").
+    product_id: Mapped[int] = mapped_column(ForeignKey("master_products.product_id"), nullable=False, index=True)
+    ordered_size: Mapped[str] = mapped_column(String(16), nullable=False)
+    quantity: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
     recipient_name: Mapped[str] = mapped_column(String(64), nullable=False)
     recipient_phone: Mapped[str] = mapped_column(String(32), nullable=False)
     shipping_addr: Mapped[str] = mapped_column(String(512), nullable=False)
     paid_amount: Mapped[float] = mapped_column(Numeric(10, 2), nullable=False)
     # PRD 5.2 "상태값을 ORDER_PURCHASED로 전환" 등 주문 파이프라인 전이를 추적하기 위한 컬럼.
     status: Mapped[OrderStatus] = mapped_column(SAEnum(OrderStatus), default=OrderStatus.RECEIVED, nullable=False)
+
+    product: Mapped["MasterProduct"] = relationship()
 
     fulfillments: Mapped[list["OrderFulfillment"]] = relationship(
         back_populates="order", cascade="all, delete-orphan"
