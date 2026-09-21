@@ -301,15 +301,57 @@ class PlaywrightRPAClient(BaseRPAClient):
                     "화면을 캡처해서 실제 라벨 문구를 확인해야 합니다."
                 )
 
-        # 주소는 "우편번호 찾기" 팝업 내부 구조가 미확인이라, 안전하게 여기서 멈춘다.
+        # 2026-09-21 실사이트 확인됨: "우편번호 찾기"는 새 팝업 창으로 카카오(다음) 우편번호
+        # 서비스 표준 위젯을 띄운다 — 여러 사이트에서 공통으로 쓰는 잘 알려진 위젯이라
+        # 어느 정도 예측 가능한 구조지만, 정확한 결과 목록 선택자는 실사이트 미검증이다.
         zipcode_button = page.get_by_text("우편번호 찾기", exact=False)
         if await zipcode_button.count() == 0:
             raise RPAPurchaseError("'우편번호 찾기' 버튼을 찾지 못했습니다 — 주소 입력 UI 구조를 다시 확인해야 합니다.")
-        raise RPAPurchaseError(
-            "주소 입력은 '우편번호 찾기' 팝업을 통해서만 가능한 것으로 보이는데, 그 팝업 내부 "
-            "구조가 아직 확인되지 않았습니다 — 이름/연락처까지는 입력했습니다. 지금 뜬 화면에서 "
-            "'우편번호 찾기'를 직접 눌러 나오는 팝업을 캡처해서 보내주세요."
-        )
+
+        async with page.context.expect_page(timeout=10000) as popup_info:
+            await zipcode_button.first.click()
+        popup = await popup_info.value
+        await popup.wait_for_load_state("domcontentloaded")
+
+        search_input = popup.locator("input[type='text']").first
+        await search_input.click()
+        await search_input.type(shipping_info.shipping_addr, delay=delay)
+        await search_input.press("Enter")
+
+        # 검색 결과 목록에서 첫 번째(가장 유사도 높은) 항목을 클릭한다 — 고르면 팝업이
+        # 자동으로 닫히고 우편번호/도로명주소가 원래 화면에 채워지는 게 표준 동작이다.
+        result_item = popup.locator("li, tr").filter(has_text=re.compile(r"\d"))
+        try:
+            await result_item.first.wait_for(state="visible", timeout=10000)
+        except Exception as exc:
+            raise RPAPurchaseError(
+                f"우편번호 검색 결과를 찾지 못했습니다 (검색어: {shipping_info.shipping_addr!r}) — "
+                "팝업 화면을 캡처해서 실제 결과 목록 구조를 확인해야 합니다."
+            ) from exc
+        await result_item.first.click()
+
+        # 이 행 안에 입력칸이 3개 있는 걸로 확인됨: [0]=우편번호, [1]=도로명주소(자동채움,
+        # 보통 읽기전용), [2]=상세주소(동/호수 등, 직접 입력). 팝업이 닫히고 [0]에 값이
+        # 채워질 때까지 잠깐 기다린 뒤 확인한다.
+        addr_row = page.locator("tr").filter(has_text=re.compile("주소"))
+        addr_inputs = addr_row.last.locator("input")
+        zip_input = addr_inputs.nth(0)
+        for _ in range(20):
+            if (await zip_input.input_value()).strip():
+                break
+            await page.wait_for_timeout(300)
+        zip_value = await zip_input.input_value()
+        print(f"  [진단] 우편번호 검색 후 값: {zip_value!r}", flush=True)
+        if not zip_value.strip():
+            raise RPAPurchaseError("우편번호 검색은 진행했지만 결과가 원래 화면에 채워지지 않았습니다 — 화면을 캡처해서 확인해야 합니다.")
+
+        # 상세주소(동/호수 등)를 별도로 구분해서 받지 않으므로, 원본 주소 전체를 상세주소
+        # 칸에도 한 번 더 넣어 정보 누락을 막는다 (중복되더라도 배송기사 입장에서는 무해함).
+        detail_count = await addr_inputs.count()
+        if detail_count >= 3:
+            detail_field = addr_inputs.nth(2)
+            await detail_field.click()
+            await detail_field.type(shipping_info.shipping_addr, delay=delay)
 
     async def _complete_payment(self, page, confirm_final_payment: bool = False) -> str:
         """PRD 5.2-4: 원클릭 간편결제/예치금/가상계좌 중 사전에 등록해둔 결제수단을 선택하고,
