@@ -269,10 +269,13 @@ class PlaywrightRPAClient(BaseRPAClient):
                 rows = page.locator("tr").filter(has_text=re.compile(label_pattern))
                 row_count = await rows.count()
                 print(f"  [진단] '{field_key}' 후보 라벨 '{label_pattern}' → 매칭된 행 {row_count}개", flush=True)
-                # 2026-09-21 devtools로 확인됨: 배송수단(일반택배/편의점픽업 등)별로 같은 라벨의
-                # 행이 미리 여러 개 만들어져 있고 안 쓰는 건 style="display:none"으로 숨겨둔다
-                # (<tr name="normalDlvy">, <tr name="pickupCVS" style="display:none">). "마지막
-                # 행"이 아니라 "실제로 화면에 보이는(visible) 행"을 찾아야 정확하다.
+                # 2026-09-21 devtools+실행 로그로 확인됨: "이름"/"휴대폰번호" 같은 라벨이
+                # 위쪽 "주문 고객정보"(계정 본인 정보) 섹션과 아래쪽 "배송 정보"(실제 수령인)
+                # 섹션 둘 다에 있고, 두 섹션 다 동시에 화면에 "보이는(visible)" 상태다 —
+                # "처음 보이는 행"을 고르면 엉뚱하게 주문 고객정보(본인 정보) 칸에 채워진다.
+                # "배송 정보" 섹션이 페이지 아래쪽(= DOM 뒤쪽)에 있으므로, 보이는 행들 중
+                # 가장 나중(마지막) 것을 골라야 한다. (그 외에 배송수단별로 미리 만들어두고
+                # style="display:none"으로 숨겨둔 행들도 섞여 있어 visible 체크 자체는 계속 필요.)
                 target = None
                 for i in range(row_count):
                     candidate_input = rows.nth(i).locator("input").first
@@ -280,8 +283,7 @@ class PlaywrightRPAClient(BaseRPAClient):
                     is_visible = await candidate_input.is_visible() if input_count > 0 else False
                     print(f"    - 행 {i}: input {input_count}개, visible={is_visible}", flush=True)
                     if input_count > 0 and is_visible:
-                        target = candidate_input
-                        break
+                        target = candidate_input  # break하지 않고 계속 진행해 "마지막" 것을 남긴다.
                 if target is None:
                     continue
                 await target.click()
