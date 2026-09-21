@@ -406,6 +406,7 @@ async def resolve_seller_info(settings: Settings | None = None, use_mock: bool |
     client = CoupangWingClient(settings=settings, use_mock=use_mock)
 
     outbound_places = await client.fetch_outbound_shipping_places(vendor_id)
+    print(f"  [진단] 출고지 응답 원본: {outbound_places}", flush=True)
     outbound = next((p for p in outbound_places if p.get("usable")), None)
     if outbound is None:
         raise CoupangRegistrationError(
@@ -413,6 +414,7 @@ async def resolve_seller_info(settings: Settings | None = None, use_mock: bool |
         )
 
     return_centers = await client.fetch_return_shipping_centers(vendor_id)
+    print(f"  [진단] 반품지 응답 원본: {return_centers}", flush=True)
     return_center = next((r for r in return_centers if r.get("usable")), None)
     if return_center is None:
         raise CoupangRegistrationError(
