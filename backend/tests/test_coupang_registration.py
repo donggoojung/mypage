@@ -84,6 +84,9 @@ def test_build_seller_product_payload_structure():
     assert "나이키" in payload["sellerProductName"]
     assert payload["deliveryChargeType"] == "FREE"
     assert payload["returnCenterCode"] == "CENTER0001"
+    # 기본값은 반드시 False(임시저장) — 실계정 첫 테스트에서 실수로 승인요청이
+    # 나가지 않도록 안전한 값을 기본으로 강제한다.
+    assert payload["requested"] is False
 
     # 260 사이즈는 품절이라 items에서 제외되어야 한다.
     item_sizes = [item["itemName"] for item in payload["items"]]
@@ -96,6 +99,14 @@ def test_build_seller_product_payload_structure():
         assert item["externalVendorSku"].startswith("CW2288-111-")
         notice_categories = {n["noticeCategoryDetailName"] for n in item["notices"]}
         assert "소재" in notice_categories
+
+
+def test_build_seller_product_payload_requests_approval_only_when_explicitly_true():
+    data = _sample_input()
+    data.request_approval = True
+    payload = build_seller_product_payload(data, SAMPLE_SELLER_INFO)
+
+    assert payload["requested"] is True
 
 
 def test_build_seller_product_payload_raises_when_all_sizes_sold_out():

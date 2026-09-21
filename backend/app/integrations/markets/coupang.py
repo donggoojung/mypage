@@ -85,6 +85,9 @@ class CoupangProductInput:
     specs: dict[str, str] = field(default_factory=dict)  # {"소재": "...", "제조국": "...", ...}
     original_price: Decimal | None = None  # None이면 selling_price와 동일하게 처리(할인 없음)
     manufacturer: str = ""
+    # False(기본값, 안전) = 임시저장만 하고 실제 판매 심사요청은 보내지 않는다.
+    # True로 바꿔야만 쿠팡에 승인요청이 실제로 들어간다 — 실계정 첫 테스트는 반드시 False로.
+    request_approval: bool = False
 
 
 def build_seller_product_payload(data: CoupangProductInput, seller_info: dict) -> dict:
@@ -172,7 +175,8 @@ def build_seller_product_payload(data: CoupangProductInput, seller_info: dict) -
         "returnAddressDetail": seller_info.get("return_address_detail", ""),
         "returnCharge": 6000,
         "outboundShippingPlaceCode": seller_info.get("outbound_shipping_place_code", ""),
-        "requested": True,
+        # False면 임시저장 상태로만 등록되고 실제 판매 심사요청은 나가지 않는다 (안전한 실계정 테스트용).
+        "requested": data.request_approval,
         "items": items,
     }
 
@@ -391,6 +395,7 @@ def register_product_for_master_product(
     use_mock: bool | None = None,
     vendor_id: str | None = None,
     seller_info: dict | None = None,
+    request_approval: bool = False,
 ) -> MarketListing:
     """master_products 1건을 쿠팡에 등록(또는 Mock 검증)하고 market_listings에 결과를 저장한다.
 
@@ -398,6 +403,9 @@ def register_product_for_master_product(
     임의의 벤더ID로 페이로드 생성을 검증할 때 override 용도로 쓴다.
     `seller_info`를 생략하면 출고지/반품지 코드를 쿠팡 API로 직접 조회해 자동으로 채운다
     (사용자가 WING 판매자센터에서 수동으로 값을 찾아 입력할 필요가 없다).
+    `request_approval=False`(기본값)면 쿠팡에 임시저장만 되고 실제 판매 심사요청은 나가지
+    않는다 — 실계정으로 처음 테스트할 때는 반드시 기본값(False)으로 두고, WING 판매자센터에서
+    등록된 내용을 눈으로 확인한 뒤에만 True로 바꿔 승인요청을 보낸다.
     """
     settings = get_settings()
     vendor_id = vendor_id or settings.coupang_vendor_id
@@ -427,6 +435,7 @@ def register_product_for_master_product(
         detail_image_url=asset.ai_detail_image_url,
         size_stock=size_stock,
         specs=product.raw_specs_json or {},
+        request_approval=request_approval,
     )
     payload = build_seller_product_payload(payload_input, seller_info)
 
