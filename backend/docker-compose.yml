@@ -6,7 +6,10 @@ services:
       POSTGRES_PASSWORD: fulfillment
       POSTGRES_DB: fulfillment
     ports:
-      - "5432:5432"
+      # 호스트 쪽 포트를 5433으로 바꿈 — Windows가 5432를 예약 포트로 막아두는
+      # 경우가 있어서(WinError 10013), 컨테이너 안쪽은 그대로 5432를 쓰고
+      # 밖에서 접속하는 포트만 5433으로 옮긴다.
+      - "5433:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
