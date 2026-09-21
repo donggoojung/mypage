@@ -137,6 +137,12 @@ class PlaywrightRPAClient(BaseRPAClient):
         await page.locator(SELECTOR_PRODUCT_LINK).first.click()
         await page.wait_for_load_state("domcontentloaded")
 
+        # 2026-09-21 실사이트 devtools로 확인됨: <ul class="size-list"><li>
+        # <button class="btn-prod-size ...">260</button></li></ul> 구조가 abc_mart.py에서
+        # 검증된 것과 동일하다. 다만 이 상품정보는 페이지 로딩 후 XHR로 뒤늦게 채워지므로,
+        # 버튼이 DOM에 나타날 때까지 먼저 기다려야 한다 — 안 그러면 아직 안 채워진 빈 화면을
+        # 보고 "사이즈가 없다"고 잘못 판단하게 된다.
+        await page.wait_for_selector(SELECTOR_SIZE_OPTIONS, state="attached", timeout=10000)
         size_options = page.locator(SELECTOR_SIZE_OPTIONS)
         size_button = size_options.filter(has_text=re.compile(rf"^\s*{re.escape(size)}\s*$"))
         count = await size_button.count()
