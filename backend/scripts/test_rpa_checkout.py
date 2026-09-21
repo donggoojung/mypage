@@ -65,6 +65,9 @@ async def main() -> None:
         session_cookies=session_cookies,
         settings=settings,
         headless=False,  # 사람이 눈으로 확인해야 하니 항상 창을 띄운다.
+        # 실패한 단계에서 창을 바로 안 닫고 멈춰서, 로그인된 실제 화면을 직접 보고
+        # 캡처할 시간을 준다 (이 수동 테스트 스크립트에서만 켠다).
+        pause_on_error=True,
     )
     shipping_info = ShippingInfo(
         recipient_name=args.name, recipient_phone=args.phone, shipping_addr=args.addr, shipping_message=args.message

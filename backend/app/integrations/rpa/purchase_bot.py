@@ -20,6 +20,7 @@
 고쳐야 한다.
 """
 
+import asyncio
 import random
 import re
 from datetime import UTC, datetime
@@ -92,11 +93,17 @@ class PlaywrightRPAClient(BaseRPAClient):
         session_cookies: list[dict],
         settings: Settings | None = None,
         headless: bool = True,
+        pause_on_error: bool = False,
     ):
         self._source_base_url = source_base_url.rstrip("/")
         self._session_cookies = session_cookies
         self._settings = settings or get_settings()
         self._headless = headless
+        # 디버깅 전용 — 어느 단계에서 실패하면 브라우저를 바로 안 닫고, 사람이 실제(로그인된)
+        # 화면을 직접 보고 캡처할 시간을 준다. scripts/test_rpa_checkout.py만 True로 켜고,
+        # 실제 서비스(order_processor.py)에서는 항상 False로 둬야 한다 — 사람이 없는 서버
+        # 환경에서 켜두면 실패한 세션이 영원히 안 닫힌 채로 남는다.
+        self._pause_on_error = pause_on_error
 
     async def purchase_order(
         self, style_code: str, size: str, shipping_info: ShippingInfo, confirm_final_payment: bool = False
@@ -130,10 +137,16 @@ class PlaywrightRPAClient(BaseRPAClient):
 
                 page.on("dialog", _accept_dialog)
 
-                await self._goto_product_and_select_size(page, style_code, size)
-                await self._proceed_to_checkout(page)
-                await self._fill_shipping_fields(page, shipping_info)
-                return await self._complete_payment(page, confirm_final_payment)
+                try:
+                    await self._goto_product_and_select_size(page, style_code, size)
+                    await self._proceed_to_checkout(page)
+                    await self._fill_shipping_fields(page, shipping_info)
+                    return await self._complete_payment(page, confirm_final_payment)
+                except Exception:
+                    if self._pause_on_error:
+                        print(f"\n실패한 화면에서 멈췄습니다 — 지금 뜬 브라우저 창을 직접 보고 캡처하세요 (URL: {page.url}).")
+                        await asyncio.to_thread(input, "확인했으면 Enter를 눌러 창을 닫으세요 >>> ")
+                    raise
             finally:
                 await browser.close()
 
@@ -216,28 +229,65 @@ class PlaywrightRPAClient(BaseRPAClient):
         raise RPAPurchaseError(f"체크아웃(주문하기) 버튼을 찾지 못했습니다 (시도한 문구: {CHECKOUT_BUTTON_TEXTS}).")
 
     async def _fill_shipping_fields(self, page, shipping_info: ShippingInfo) -> None:
-        """PRD 5.2-3: 고객 배송지 필드를 사람처럼 자연스러운 속도로 입력한다. 실사이트 미검증 —
-        라벨 텍스트(수령인/연락처/주소)로 입력칸을 찾는 방식이라, 실제 라벨 문구가 다르면
-        입력에 실패한다(이 경우 아무것도 안 눌렸으니 안전하게 멈춘다).
-        """
-        delay = random.randint(*TYPING_DELAY_MS_RANGE)
-        field_values = {
-            "수령인": shipping_info.recipient_name,
-            "연락처": shipping_info.recipient_phone,
-            "주소": shipping_info.shipping_addr,
-        }
-        for label, value in field_values.items():
-            field = page.get_by_label(re.compile(re.escape(label)))
-            if await field.count() == 0:
-                raise RPAPurchaseError(f"배송지 입력칸 '{label}'을(를) 찾지 못했습니다 (라벨 문구가 다를 수 있음).")
-            await field.first.click()
-            await field.first.type(value, delay=delay)
+        """PRD 5.2-3: 고객 배송지 필드를 사람처럼 자연스러운 속도로 입력한다.
 
-        if shipping_info.shipping_message:
-            message_field = page.get_by_label(re.compile("배송\\s*메모|요청사항"))
-            if await message_field.count() > 0:
-                await message_field.first.click()
-                await message_field.first.type(shipping_info.shipping_message, delay=delay)
+        2026-09-21 실사이트(비로그인 상태) devtools로 확인됨: 주문서(/order) 페이지의
+        "배송 정보" 섹션은 기본값이 "주문자와 동일"이라, 그대로 두면 실제 고객이 아니라
+        ABC마트 계정 소유자 본인 정보로 배송지가 채워지는 심각한 오류가 난다 — 반드시
+        "신규입력"으로 바꾼 뒤 실제 수령인 정보를 입력해야 한다.
+
+        라벨은 "이름"/"휴대폰번호"로 확인됐지만, 같은 페이지 위쪽 "주문 고객정보" 섹션에도
+        동일한 라벨이 있어 라벨만으로는 어느 칸인지 모호하다 — "신규입력" 전환 후 나타나는
+        입력칸(마지막에 매칭되는 것)을 우선한다.
+
+        주소(우편번호 찾기 팝업)는 아직 실사이트 구조 미확인 — 팝업/iframe 내부 선택자를
+        모르는 채로 잘못 클릭하면 엉뚱한 주소가 들어갈 수 있어, 여기서는 시도하지 않고
+        명확한 에러로 멈춘다(안전).
+        """
+        new_address_radio = page.get_by_text("신규입력", exact=False)
+        if await new_address_radio.count() > 0:
+            await new_address_radio.first.click()
+
+        delay = random.randint(*TYPING_DELAY_MS_RANGE)
+        field_labels = {
+            "recipient_name": ["수령인", "받는\\s*사람", "이름"],
+            "recipient_phone": ["연락처", "휴대폰\\s*번호", "휴대폰번호"],
+        }
+        field_values = {
+            "recipient_name": shipping_info.recipient_name,
+            "recipient_phone": shipping_info.recipient_phone,
+        }
+        for field_key, candidates in field_labels.items():
+            value = field_values[field_key]
+            filled = False
+            for label_pattern in candidates:
+                field = page.get_by_label(re.compile(label_pattern))
+                count = await field.count()
+                if count == 0:
+                    continue
+                # 같은 라벨이 위쪽 "주문 고객정보" 섹션에도 있을 수 있어, 나중에 나오는
+                # (= "배송 정보" 섹션의) 입력칸을 우선한다.
+                target = field.last
+                await target.click()
+                await target.fill("")
+                await target.type(value, delay=delay)
+                filled = True
+                break
+            if not filled:
+                raise RPAPurchaseError(
+                    f"배송지 입력칸을 찾지 못했습니다 ({field_key}, 시도한 라벨: {candidates}) — "
+                    "화면을 캡처해서 실제 라벨 문구를 확인해야 합니다."
+                )
+
+        # 주소는 "우편번호 찾기" 팝업 내부 구조가 미확인이라, 안전하게 여기서 멈춘다.
+        zipcode_button = page.get_by_text("우편번호 찾기", exact=False)
+        if await zipcode_button.count() == 0:
+            raise RPAPurchaseError("'우편번호 찾기' 버튼을 찾지 못했습니다 — 주소 입력 UI 구조를 다시 확인해야 합니다.")
+        raise RPAPurchaseError(
+            "주소 입력은 '우편번호 찾기' 팝업을 통해서만 가능한 것으로 보이는데, 그 팝업 내부 "
+            "구조가 아직 확인되지 않았습니다 — 이름/연락처까지는 입력했습니다. 지금 뜬 화면에서 "
+            "'우편번호 찾기'를 직접 눌러 나오는 팝업을 캡처해서 보내주세요."
+        )
 
     async def _complete_payment(self, page, confirm_final_payment: bool = False) -> str:
         """PRD 5.2-4: 원클릭 간편결제/예치금/가상계좌 중 사전에 등록해둔 결제수단을 선택하고,
