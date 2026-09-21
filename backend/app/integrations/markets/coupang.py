@@ -37,8 +37,10 @@ PRODUCT_REGISTRATION_PATH = "/v2/providers/seller_api/apis/api/v1/marketplace/se
 # marketplace_openapi이고, vendorId를 경로에 안 넣는다(API 키로 자동 식별됨) — 처음에
 # 추측했던 경로(v4/vendors/{id}/shipping-place/list)는 404였다.
 SHIPPING_PLACE_LIST_PATH = "/v2/providers/marketplace_openapi/apis/api/v1/vendor/shipping-place/outbound"
-# 주의 — 반품지 조회 경로/응답 필드명은 아직 실API 미검증이다 (파일 상단 설명 참고).
-RETURN_SHIPPING_CENTER_LIST_PATH = "/v2/providers/openapi/apis/api/v4/vendors/{vendor_id}/returnShippingCenters"
+# 2026-09-21 실계정 테스트로 확인됨: v4 경로는 200 OK를 반환하지만 WING 화면에는
+# 분명히 "사용중" 상태로 있는 반품지가 빈 배열([])로 나왔다 — v4가 오래된/캐시된
+# 버전일 가능성이 있어 v5로 변경해본다 (v5가 "공식 경로"라는 자료도 있었음).
+RETURN_SHIPPING_CENTER_LIST_PATH = "/v2/providers/openapi/apis/api/v5/vendors/{vendor_id}/returnShippingCenters"
 ORDER_SHEETS_PATH = "/v2/providers/openapi/apis/api/v4/vendors/{vendor_id}/ordersheets"
 CATEGORY_PREDICTION_PATH = "/v2/providers/openapi/apis/api/v1/categorization/predict"
 
