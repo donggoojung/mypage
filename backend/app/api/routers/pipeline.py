@@ -16,10 +16,7 @@ router = APIRouter(prefix="/api/pipeline", tags=["pipeline"])
 class PipelineRunRequest(BaseModel):
     url: str
     request_approval: bool = False
-    target_margin_rate: float = 0.30
-    fixed_margin: float = 5000
-    customer_shipping_charge: float = 3000
-    source_shipping_cost: float = 0
+    target_margin_rate: float = 0.30  # 정가 대비 마크업 비율 (판매가 = 원가 × (1+이 값))
     display_category_code: int = 56137
     category: str = "운동화"
     color_tone: str = "neutral"
@@ -52,9 +49,6 @@ class PipelineRunBatchRequest(BaseModel):
     urls: list[str]
     request_approval: bool = False
     target_margin_rate: float = 0.30
-    fixed_margin: float = 5000
-    customer_shipping_charge: float = 3000
-    source_shipping_cost: float = 0
     display_category_code: int = 56137
     category: str = "운동화"
     color_tone: str = "neutral"

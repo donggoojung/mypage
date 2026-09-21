@@ -18,21 +18,19 @@ from app.integrations.markets.coupang import (
     register_product_for_master_product,
 )
 from app.integrations.scrapers.abc_mart import ABCMartScraper
-from app.models.enums import GenerationStatus, MarketType, SourcePlatform
+from app.models.enums import GenerationStatus, SourcePlatform
 from app.models.generated_asset import GeneratedAsset
 from app.models.master_product import MasterProduct
 from app.models.source_mapping import SourceMapping
 from app.services.asset_pipeline import generate_product_assets
-from app.services.margin_engine import ReverseMarginError, calculate_selling_price_for_platform
+from app.services.margin_engine import calculate_simple_markup_price
 
 
 @dataclass
 class PipelineOptions:
     headless: bool = True
-    fixed_margin: Decimal = Decimal("5000")
+    # 정가(크롤링된 표시가) 대비 단순 마크업 비율 — 판매가 = 원가 × (1 + target_margin_rate).
     target_margin_rate: Decimal = Decimal("0.30")
-    customer_shipping_charge: Decimal = Decimal("3000")
-    source_shipping_cost: Decimal = Decimal("0")
     display_category_code: int = 56137
     category: str = "운동화"
     color_tone: str = "neutral"
@@ -74,21 +72,14 @@ async def run_pipeline_for_url(url: str, options: PipelineOptions | None = None)
         f"품번={scraped.style_code}, 원가={scraped.price:,.0f}원"
     )
 
-    # --- [2/5] 마진 엔진 (쿠팡 채널 기준 판매가) ---
-    print("[2/5] 마진 엔진으로 쿠팡 채널 판매가 계산 중...")
+    # --- [2/5] 판매가 계산: 정가 × (1 + 목표 마진율) 단순 마크업 ---
+    print("[2/5] 판매가 계산 중...")
     purchase_cost = Decimal(str(scraped.price))
-    try:
-        selling_price = calculate_selling_price_for_platform(
-            market_type=MarketType.COUPANG,
-            purchase_cost=purchase_cost,
-            fixed_margin=options.fixed_margin,
-            source_shipping_cost=options.source_shipping_cost,
-            customer_shipping_charge=options.customer_shipping_charge,
-            target_margin_rate=options.target_margin_rate,
-        )
-    except ReverseMarginError as exc:
-        raise PipelineError(f"역마진 방지 수식이 판매가를 계산할 수 없습니다: {exc}") from exc
-    print(f"  원가 {purchase_cost:,.0f}원 → 쿠팡 판매가 {selling_price:,}원")
+    selling_price = calculate_simple_markup_price(purchase_cost, options.target_margin_rate)
+    print(
+        f"  원가(정가) {purchase_cost:,.0f}원 × (1+{options.target_margin_rate:.0%}) "
+        f"→ 쿠팡 판매가 {selling_price:,}원"
+    )
 
     # --- [3/5] DB에 MasterProduct + SourceMapping upsert ---
     print("[3/5] DB에 상품 정보 저장 중...")

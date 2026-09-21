@@ -10,7 +10,34 @@ from app.services.margin_engine import (
     calculate_actual_net_profit,
     calculate_selling_price,
     calculate_selling_price_for_platform,
+    calculate_simple_markup_price,
 )
+
+
+def test_calculate_simple_markup_price_applies_flat_percentage_on_list_price():
+    # 실사용 사례: 정가 129,000원짜리 상품을 30% 마크업해서 파는 경우.
+    price = calculate_simple_markup_price(Decimal("129000"), Decimal("0.30"))
+
+    assert price == Decimal("167700")  # 129000 * 1.30
+
+
+def test_calculate_simple_markup_price_rounds_up_to_whole_won():
+    price = calculate_simple_markup_price(Decimal("59000"), Decimal("0.30"))
+
+    assert price == Decimal("76700")  # 59000 * 1.30 = 76700.0 정확히 나눠떨어지는 예시
+
+
+def test_calculate_simple_markup_price_rounds_up_fractional_won():
+    price = calculate_simple_markup_price(Decimal("59001"), Decimal("0.30"))
+
+    # 59001 * 1.30 = 76701.3 → 원 단위 미만은 올림
+    assert price == Decimal("76702")
+
+
+def test_calculate_simple_markup_price_defaults_to_30_percent():
+    price = calculate_simple_markup_price(Decimal("100000"))
+
+    assert price == Decimal("130000")
 
 
 def test_calculate_selling_price_matches_manual_worked_example():

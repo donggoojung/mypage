@@ -50,10 +50,12 @@ def parse_args() -> argparse.Namespace:
         help="한 줄에 URL 하나씩 적힌 텍스트 파일 경로 (배치 실행, `#`으로 시작하는 줄은 무시)",
     )
     parser.add_argument("--headless", action="store_true", help="브라우저 창 없이 크롤링 (기본은 창을 띄워 확인)")
-    parser.add_argument("--fixed-margin", type=Decimal, default=Decimal("5000"))
-    parser.add_argument("--target-margin-rate", type=Decimal, default=Decimal("0.30"))
-    parser.add_argument("--customer-shipping-charge", type=Decimal, default=Decimal("3000"))
-    parser.add_argument("--source-shipping-cost", type=Decimal, default=Decimal("0"))
+    parser.add_argument(
+        "--target-margin-rate",
+        type=Decimal,
+        default=Decimal("0.30"),
+        help="정가 대비 마크업 비율 — 판매가 = 원가(정가) × (1 + 이 값) (기본 0.30 = 30%%)",
+    )
     parser.add_argument(
         "--display-category-code",
         type=int,
@@ -85,10 +87,7 @@ def _load_urls_from_file(path: str) -> list[str]:
 def _options_from_args(args: argparse.Namespace) -> PipelineOptions:
     return PipelineOptions(
         headless=args.headless,
-        fixed_margin=args.fixed_margin,
         target_margin_rate=args.target_margin_rate,
-        customer_shipping_charge=args.customer_shipping_charge,
-        source_shipping_cost=args.source_shipping_cost,
         display_category_code=args.display_category_code,
         category=args.category,
         color_tone=args.color_tone,

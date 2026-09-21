@@ -66,6 +66,17 @@ def calculate_selling_price(inputs: MarginInputs) -> Decimal:
     return price.quantize(Decimal("1"), rounding=ROUND_CEILING)
 
 
+def calculate_simple_markup_price(purchase_cost: Decimal, markup_rate: Decimal = Decimal("0.30")) -> Decimal:
+    """정가(크롤링된 표시가) 대비 단순 마크업 판매가 = 원가 × (1 + markup_rate).
+
+    `calculate_selling_price_for_platform`(역마진 방지 공식)과 달리 오픈마켓 수수료나
+    배송비 상계를 반영하지 않는다 — "정가에 30% 얹어서 판다" 같은 단순한 가격 정책을
+    쓰고 싶을 때 쓴다. 원 단위 미만은 올림 처리한다.
+    """
+    price = purchase_cost * (Decimal("1") + markup_rate)
+    return price.quantize(Decimal("1"), rounding=ROUND_CEILING)
+
+
 def calculate_selling_price_for_platform(
     market_type: MarketType,
     purchase_cost: Decimal,

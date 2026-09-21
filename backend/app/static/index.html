@@ -121,11 +121,8 @@
     <details>
       <summary>고급 옵션 (선택)</summary>
       <div class="options-grid">
-        <label>목표 마진율
+        <label>마크업 비율 (정가 대비)
           <input id="opt-margin-rate" type="number" step="0.01" value="0.30">
-        </label>
-        <label>고정 마진(원)
-          <input id="opt-fixed-margin" type="number" step="1000" value="5000">
         </label>
         <label>쿠팡 전시카테고리 코드
           <input id="opt-category-code" type="number" value="56137">
@@ -212,7 +209,6 @@ async function runPipeline() {
   const payload = {
     url,
     target_margin_rate: parseFloat(document.getElementById("opt-margin-rate").value) || 0.30,
-    fixed_margin: parseFloat(document.getElementById("opt-fixed-margin").value) || 5000,
     display_category_code: parseInt(document.getElementById("opt-category-code").value) || 56137,
     request_approval: document.getElementById("opt-request-approval").value === "true",
   };

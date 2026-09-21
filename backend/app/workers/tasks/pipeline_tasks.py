@@ -13,10 +13,7 @@ def _options_from_dict(options: dict | None) -> PipelineOptions:
     options = options or {}
     return PipelineOptions(
         headless=True,  # 서버에서 도는 백그라운드 작업이라 항상 창 없이 실행.
-        fixed_margin=Decimal(str(options.get("fixed_margin", "5000"))),
         target_margin_rate=Decimal(str(options.get("target_margin_rate", "0.30"))),
-        customer_shipping_charge=Decimal(str(options.get("customer_shipping_charge", "3000"))),
-        source_shipping_cost=Decimal(str(options.get("source_shipping_cost", "0"))),
         display_category_code=int(options.get("display_category_code", 56137)),
         category=options.get("category", "운동화"),
         color_tone=options.get("color_tone", "neutral"),
