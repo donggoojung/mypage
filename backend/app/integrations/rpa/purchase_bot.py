@@ -345,7 +345,10 @@ class PlaywrightRPAClient(BaseRPAClient):
                 )
 
         search_input = search_frame.locator(search_selector).first
-        await search_input.click()
+        # 2026-09-21 실행 로그로 확인됨: placeholder 안내문구가 스타일용 <span>으로
+        # input 위에 겹쳐 있어(포커스 전까지 보여주는 장식) 일반 click()의 "클릭 지점이
+        # 가려져 있지 않은지" 검사에서 계속 막힌다 — force=True로 그 검사를 건너뛴다.
+        await search_input.click(force=True)
         await search_input.type(shipping_info.shipping_addr, delay=delay)
         await search_input.press("Enter")
 
