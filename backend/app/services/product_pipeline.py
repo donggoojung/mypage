@@ -26,6 +26,11 @@ from app.models.source_mapping import SourceMapping
 from app.services.asset_pipeline import generate_product_assets
 from app.services.margin_engine import calculate_simple_markup_price
 
+# 쿠팡 카테고리 자동추천 API가 실패했을 때(예: 계정에 해당 API 권한이 없어 403) 쓰는
+# 폴백 값 — "운동화" 전시카테고리 예시 코드. 정확한 카테고리가 중요하면 고급 옵션에서
+# display_category_code를 직접 지정해야 한다.
+DEFAULT_DISPLAY_CATEGORY_CODE = 56137
+
 
 @dataclass
 class PipelineOptions:
@@ -153,8 +158,16 @@ async def run_pipeline_for_url(url: str, options: PipelineOptions | None = None)
     print("[5/5] 쿠팡 상품 등록 준비 중...")
     display_category_code = options.display_category_code
     if display_category_code is None:
-        display_category_code = await predict_display_category_code(f"{brand_name} {product_name}")
-        print(f"  전시카테고리 자동추천: {display_category_code} (상품명 기반, 수동 지정 안 함)")
+        try:
+            display_category_code = await predict_display_category_code(f"{brand_name} {product_name}")
+            print(f"  전시카테고리 자동추천: {display_category_code} (상품명 기반, 수동 지정 안 함)")
+        except (CoupangRegistrationError, httpx.HTTPError) as exc:
+            # 카테고리 자동추천 API가 실API 미검증 상태라(계정별 별도 승인이 필요할 수 있음),
+            # 이게 실패했다고 등록 전체를 막으면 안 된다 — 기본값으로 넘어가고, 정확한
+            # 카테고리가 중요한 상품이면 대시보드 고급 옵션에서 직접 코드를 지정하라고 안내한다.
+            display_category_code = DEFAULT_DISPLAY_CATEGORY_CODE
+            print(f"  전시카테고리 자동추천 실패({exc}) — 기본값 {display_category_code}로 등록합니다.")
+            print("  정확한 카테고리가 필요하면 고급 옵션에서 직접 코드를 지정해주세요.")
     try:
         listing = await asyncio.to_thread(
             _register_coupang_sync,
