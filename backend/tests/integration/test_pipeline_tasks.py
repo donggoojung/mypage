@@ -89,3 +89,37 @@ def test_refresh_all_registered_products_handles_no_products(db_session, monkeyp
     result = pipeline_tasks.refresh_all_registered_products_task.run()
 
     assert result == {"total": 0, "succeeded": [], "failed": []}
+
+
+def test_run_pipeline_for_urls_processes_given_list(monkeypatch):
+    calls = []
+
+    async def _fake_run_pipeline_for_url(url, options):
+        calls.append(url)
+        return _fake_result(url)
+
+    monkeypatch.setattr(pipeline_tasks, "run_pipeline_for_url", _fake_run_pipeline_for_url)
+
+    urls = ["https://abcmart.a-rt.com/product?prdtNo=10", "https://abcmart.a-rt.com/product?prdtNo=20"]
+    result = pipeline_tasks.run_pipeline_for_urls_task.apply(args=[urls]).get()
+
+    assert result["total"] == 2
+    assert len(result["succeeded"]) == 2
+    assert calls == urls
+
+
+def test_discover_category_urls_task_returns_found_urls(monkeypatch):
+    async def _fake_fetch_category_product_urls(self, category_url, max_products=30, max_pages=10):
+        assert category_url == "https://abcmart.a-rt.com/display/ranking/main"
+        assert max_products == 20
+        return ["https://abcmart.a-rt.com/product?prdtNo=1", "https://abcmart.a-rt.com/product?prdtNo=2"]
+
+    from app.integrations.scrapers.abc_mart import ABCMartScraper
+
+    monkeypatch.setattr(ABCMartScraper, "fetch_category_product_urls", _fake_fetch_category_product_urls)
+
+    result = pipeline_tasks.discover_category_urls_task.apply(
+        args=["https://abcmart.a-rt.com/display/ranking/main", 20, 1]
+    ).get()
+
+    assert result == {"urls": ["https://abcmart.a-rt.com/product?prdtNo=1", "https://abcmart.a-rt.com/product?prdtNo=2"]}

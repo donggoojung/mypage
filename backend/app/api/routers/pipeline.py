@@ -1,9 +1,14 @@
 from celery.result import AsyncResult
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from app.core.celery_app import celery_app
-from app.workers.tasks.pipeline_tasks import refresh_all_registered_products_task, run_pipeline_for_url_task
+from app.workers.tasks.pipeline_tasks import (
+    discover_category_urls_task,
+    refresh_all_registered_products_task,
+    run_pipeline_for_url_task,
+    run_pipeline_for_urls_task,
+)
 
 router = APIRouter(prefix="/api/pipeline", tags=["pipeline"])
 
@@ -40,6 +45,42 @@ def refresh_all_pipeline() -> PipelineRunResponse:
     URL을 일일이 다시 넣지 않고 한 번의 클릭으로 전부 최신화할 수 있게 해준다.
     """
     task = refresh_all_registered_products_task.delay()
+    return PipelineRunResponse(task_id=task.id)
+
+
+class PipelineRunBatchRequest(BaseModel):
+    urls: list[str]
+    request_approval: bool = False
+    target_margin_rate: float = 0.30
+    fixed_margin: float = 5000
+    customer_shipping_charge: float = 3000
+    source_shipping_cost: float = 0
+    display_category_code: int = 56137
+    category: str = "운동화"
+    color_tone: str = "neutral"
+
+
+@router.post("/run-batch", response_model=PipelineRunResponse)
+def run_pipeline_batch(payload: PipelineRunBatchRequest) -> PipelineRunResponse:
+    """대시보드의 "섹션 일괄 등록" 버튼 — 사용자가 검토한 URL 목록을 순서대로 신규 등록한다."""
+    urls = [u.strip() for u in payload.urls if u.strip()]
+    if not urls:
+        raise HTTPException(status_code=400, detail="등록할 URL이 없습니다.")
+    options = payload.model_dump(exclude={"urls"})
+    task = run_pipeline_for_urls_task.delay(urls, options)
+    return PipelineRunResponse(task_id=task.id)
+
+
+class DiscoverCategoryRequest(BaseModel):
+    category_url: str
+    max_products: int = 30
+    max_pages: int = 1
+
+
+@router.post("/discover", response_model=PipelineRunResponse)
+def discover_category(payload: DiscoverCategoryRequest) -> PipelineRunResponse:
+    """대시보드의 "URL 목록 가져오기" 버튼 — 카테고리/랭킹 페이지에서 상품 URL만 수집한다(등록 안 함)."""
+    task = discover_category_urls_task.delay(payload.category_url, payload.max_products, payload.max_pages)
     return PipelineRunResponse(task_id=task.id)
 
 

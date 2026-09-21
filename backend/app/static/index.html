@@ -79,7 +79,7 @@
     margin-top: 10px;
   }
   .options-grid label { display: flex; flex-direction: column; font-size: 12px; color: var(--muted); gap: 4px; }
-  #status-box {
+  #status-box, .info-box {
     margin-top: 14px;
     padding: 12px;
     border-radius: 8px;
@@ -88,10 +88,10 @@
     display: none;
     white-space: pre-wrap;
   }
-  #status-box.show { display: block; }
-  #status-box.pending { border-left: 4px solid var(--warn); }
-  #status-box.success { border-left: 4px solid var(--success); }
-  #status-box.failure { border-left: 4px solid var(--danger); }
+  #status-box.show, .info-box.show { display: block; }
+  #status-box.pending, .info-box.pending { border-left: 4px solid var(--warn); }
+  #status-box.success, .info-box.success { border-left: 4px solid var(--success); }
+  #status-box.failure, .info-box.failure { border-left: 4px solid var(--danger); }
   table { width: 100%; border-collapse: collapse; font-size: 13px; }
   th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); }
   th { color: var(--muted); font-weight: 600; }
@@ -152,6 +152,25 @@
     <p class="empty" style="margin-top:-6px">"전체 갱신" = 이미 등록된 상품 전부를 저장된 URL로 다시 크롤링/등록해 최신 코드 기준으로 맞춥니다.</p>
     <div id="refresh-all-status"></div>
     <div id="products-area"><p class="empty">불러오는 중...</p></div>
+  </section>
+
+  <section class="card">
+    <h2>섹션(카테고리) 일괄 등록</h2>
+    <p class="empty" style="margin-top:-10px">ABC마트 랭킹/카테고리 목록 페이지 URL을 넣으면 상품 URL을 자동으로 모아옵니다. 전체 사이트를 한 번에 긁지는 않고, 정해진 개수만 가져와 검토 후 등록합니다.</p>
+    <div class="row">
+      <input id="category-url-input" type="text" placeholder="ABC마트 카테고리/랭킹 목록 페이지 URL" style="flex:1;min-width:240px">
+      <input id="category-max" type="number" value="30" style="width:80px" title="가져올 최대 개수">
+      <button class="secondary" onclick="discoverCategoryUrls()" id="discover-btn">URL 목록 가져오기</button>
+    </div>
+    <div id="discover-status"></div>
+    <details style="margin-top:12px">
+      <summary>가져온 URL 목록 (검토 후 필요없는 줄은 지우세요)</summary>
+      <textarea id="batch-urls-textarea" rows="8" style="width:100%;margin-top:8px;padding:8px;border:1px solid var(--border);border-radius:6px;font-family:monospace;font-size:12px;" placeholder="한 줄에 URL 하나씩"></textarea>
+    </details>
+    <div class="row" style="margin-top:10px">
+      <button onclick="runBatchRegister()" id="batch-register-btn">이 목록으로 일괄 등록</button>
+    </div>
+    <div id="batch-status"></div>
   </section>
 
   <section class="card">
@@ -260,30 +279,9 @@ async function pollStatus(taskId, statusBox, runBtn) {
   poll();
 }
 
-async function refreshAllProducts() {
-  const btn = document.getElementById("refresh-all-btn");
-  const statusBox = document.getElementById("refresh-all-status");
-
-  if (!confirm("등록된 상품 전부를 저장된 URL로 다시 크롤링/등록합니다. 계속할까요?")) return;
-
-  btn.disabled = true;
-  statusBox.className = "status-box show pending";
-  statusBox.id = "refresh-all-status";
-  statusBox.style.cssText = "margin:10px 0;padding:12px;border-radius:8px;background:#f1f5f9;font-size:13px;white-space:pre-wrap;border-left:4px solid #d97706";
-  statusBox.textContent = "요청을 보냈습니다...";
-
-  let taskId;
-  try {
-    const res = await fetch("/api/pipeline/refresh-all", { method: "POST" });
-    if (!res.ok) throw new Error(`서버 오류 (${res.status})`);
-    taskId = (await res.json()).task_id;
-  } catch (err) {
-    statusBox.style.borderLeftColor = "#dc2626";
-    statusBox.textContent = "요청 실패: " + err.message;
-    btn.disabled = false;
-    return;
-  }
-
+// 공용 폴링 헬퍼: taskId를 몇 초 간격으로 확인하다가 끝나면 콜백을 부른다.
+// statusBox: 진행상황을 표시할 div, callbacks: { onProgress(meta), onSuccess(result), onFailure(error) }
+function pollTask(taskId, statusBox, callbacks) {
   const poll = async () => {
     let data;
     try {
@@ -295,24 +293,141 @@ async function refreshAllProducts() {
     }
 
     if (data.state === "SUCCESS") {
-      const r = data.result;
-      statusBox.style.borderLeftColor = "#16a34a";
-      statusBox.textContent = `전체 갱신 완료: 총 ${r.total}건 중 성공 ${r.succeeded.length}건 / 실패 ${r.failed.length}건`;
-      if (r.failed.length) {
-        statusBox.textContent += "\n\n실패 목록:\n" + r.failed.map(f => `- ${f.url}: ${f.error}`).join("\n");
-      }
-      btn.disabled = false;
-      loadProducts();
+      statusBox.className = "info-box show success";
+      callbacks.onSuccess(data.result);
     } else if (data.state === "FAILURE") {
-      statusBox.style.borderLeftColor = "#dc2626";
-      statusBox.textContent = "전체 갱신 실패: " + (data.error || "알 수 없는 오류");
-      btn.disabled = false;
+      statusBox.className = "info-box show failure";
+      statusBox.textContent = "실패: " + (data.error || "알 수 없는 오류");
+      callbacks.onFailure(data.error);
     } else {
       if (data.meta && data.meta.step) statusBox.textContent = data.meta.step;
       setTimeout(poll, 2500);
     }
   };
   poll();
+}
+
+async function refreshAllProducts() {
+  const btn = document.getElementById("refresh-all-btn");
+  const statusBox = document.getElementById("refresh-all-status");
+
+  if (!confirm("등록된 상품 전부를 저장된 URL로 다시 크롤링/등록합니다. 계속할까요?")) return;
+
+  btn.disabled = true;
+  statusBox.className = "info-box show pending";
+  statusBox.textContent = "요청을 보냈습니다...";
+
+  let taskId;
+  try {
+    const res = await fetch("/api/pipeline/refresh-all", { method: "POST" });
+    if (!res.ok) throw new Error(`서버 오류 (${res.status})`);
+    taskId = (await res.json()).task_id;
+  } catch (err) {
+    statusBox.className = "info-box show failure";
+    statusBox.textContent = "요청 실패: " + err.message;
+    btn.disabled = false;
+    return;
+  }
+
+  pollTask(taskId, statusBox, {
+    onSuccess: (r) => {
+      statusBox.textContent = `전체 갱신 완료: 총 ${r.total}건 중 성공 ${r.succeeded.length}건 / 실패 ${r.failed.length}건`;
+      if (r.failed.length) statusBox.textContent += "\n\n실패 목록:\n" + r.failed.map(f => `- ${f.url}: ${f.error}`).join("\n");
+      btn.disabled = false;
+      loadProducts();
+    },
+    onFailure: () => { btn.disabled = false; },
+  });
+}
+
+async function discoverCategoryUrls() {
+  const categoryUrl = document.getElementById("category-url-input").value.trim();
+  const maxProducts = parseInt(document.getElementById("category-max").value) || 30;
+  const btn = document.getElementById("discover-btn");
+  const statusBox = document.getElementById("discover-status");
+
+  if (!categoryUrl) {
+    alert("ABC마트 카테고리/랭킹 목록 페이지 URL을 입력해주세요.");
+    return;
+  }
+
+  btn.disabled = true;
+  statusBox.className = "info-box show pending";
+  statusBox.textContent = "카테고리 페이지에서 상품 URL 수집 중...";
+
+  let taskId;
+  try {
+    const res = await fetch("/api/pipeline/discover", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ category_url: categoryUrl, max_products: maxProducts }),
+    });
+    if (!res.ok) throw new Error(`서버 오류 (${res.status})`);
+    taskId = (await res.json()).task_id;
+  } catch (err) {
+    statusBox.className = "info-box show failure";
+    statusBox.textContent = "요청 실패: " + err.message;
+    btn.disabled = false;
+    return;
+  }
+
+  pollTask(taskId, statusBox, {
+    onSuccess: (r) => {
+      const urls = r.urls || [];
+      if (!urls.length) {
+        statusBox.className = "info-box show failure";
+        statusBox.textContent = "상품 URL을 하나도 못 찾았습니다 — 카테고리 페이지 구조가 다를 수 있습니다.";
+      } else {
+        statusBox.textContent = `${urls.length}개 상품 URL을 찾았습니다. 아래 "가져온 URL 목록"을 펼쳐서 확인 후 일괄 등록해주세요.`;
+        document.getElementById("batch-urls-textarea").value = urls.join("\n");
+        document.querySelector("#category-url-input").closest("section").querySelector("details").open = true;
+      }
+      btn.disabled = false;
+    },
+    onFailure: () => { btn.disabled = false; },
+  });
+}
+
+async function runBatchRegister() {
+  const urls = document.getElementById("batch-urls-textarea").value.split("\n").map(s => s.trim()).filter(Boolean);
+  const btn = document.getElementById("batch-register-btn");
+  const statusBox = document.getElementById("batch-status");
+
+  if (!urls.length) {
+    alert("등록할 URL이 없습니다. 먼저 URL 목록을 가져오거나 직접 입력해주세요.");
+    return;
+  }
+  if (!confirm(`${urls.length}개 상품을 일괄 등록합니다 (쿠팡에는 임시저장 상태로만 들어갑니다). 계속할까요?`)) return;
+
+  btn.disabled = true;
+  statusBox.className = "info-box show pending";
+  statusBox.textContent = "요청을 보냈습니다...";
+
+  let taskId;
+  try {
+    const res = await fetch("/api/pipeline/run-batch", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ urls }),
+    });
+    if (!res.ok) throw new Error(`서버 오류 (${res.status})`);
+    taskId = (await res.json()).task_id;
+  } catch (err) {
+    statusBox.className = "info-box show failure";
+    statusBox.textContent = "요청 실패: " + err.message;
+    btn.disabled = false;
+    return;
+  }
+
+  pollTask(taskId, statusBox, {
+    onSuccess: (r) => {
+      statusBox.textContent = `일괄 등록 완료: 총 ${r.total}건 중 성공 ${r.succeeded.length}건 / 실패 ${r.failed.length}건`;
+      if (r.failed.length) statusBox.textContent += "\n\n실패 목록:\n" + r.failed.map(f => `- ${f.url}: ${f.error}`).join("\n");
+      btn.disabled = false;
+      loadProducts();
+    },
+    onFailure: () => { btn.disabled = false; },
+  });
 }
 
 async function loadProducts() {

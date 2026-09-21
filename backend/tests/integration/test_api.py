@@ -153,3 +153,52 @@ async def test_refresh_all_pipeline_enqueues_celery_task(client, monkeypatch):
     response = await client.post("/api/pipeline/refresh-all")
     assert response.status_code == 200
     assert response.json() == {"task_id": "fake-refresh-task-id"}
+
+
+@pytest.mark.asyncio
+async def test_run_pipeline_batch_enqueues_celery_task(client, monkeypatch):
+    class _FakeAsyncResult:
+        id = "fake-batch-task-id"
+
+    def _fake_delay(urls, options):
+        assert urls == ["https://abcmart.a-rt.com/product?prdtNo=1", "https://abcmart.a-rt.com/product?prdtNo=2"]
+        return _FakeAsyncResult()
+
+    from app.api.routers import pipeline as pipeline_router
+
+    monkeypatch.setattr(pipeline_router.run_pipeline_for_urls_task, "delay", _fake_delay)
+
+    response = await client.post(
+        "/api/pipeline/run-batch",
+        json={"urls": ["https://abcmart.a-rt.com/product?prdtNo=1", "https://abcmart.a-rt.com/product?prdtNo=2"]},
+    )
+    assert response.status_code == 200
+    assert response.json() == {"task_id": "fake-batch-task-id"}
+
+
+@pytest.mark.asyncio
+async def test_run_pipeline_batch_rejects_empty_url_list(client):
+    response = await client.post("/api/pipeline/run-batch", json={"urls": ["   ", ""]})
+    assert response.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_discover_category_enqueues_celery_task(client, monkeypatch):
+    class _FakeAsyncResult:
+        id = "fake-discover-task-id"
+
+    def _fake_delay(category_url, max_products, max_pages):
+        assert category_url == "https://abcmart.a-rt.com/display/ranking/main"
+        assert max_products == 20
+        return _FakeAsyncResult()
+
+    from app.api.routers import pipeline as pipeline_router
+
+    monkeypatch.setattr(pipeline_router.discover_category_urls_task, "delay", _fake_delay)
+
+    response = await client.post(
+        "/api/pipeline/discover",
+        json={"category_url": "https://abcmart.a-rt.com/display/ranking/main", "max_products": 20},
+    )
+    assert response.status_code == 200
+    assert response.json() == {"task_id": "fake-discover-task-id"}

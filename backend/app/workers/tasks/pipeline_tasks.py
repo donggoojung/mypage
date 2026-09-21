@@ -3,6 +3,7 @@ from decimal import Decimal
 
 from app.core.celery_app import celery_app
 from app.core.database import SessionLocalSync
+from app.integrations.scrapers.abc_mart import ABCMartScraper
 from app.models.enums import SourcePlatform
 from app.models.source_mapping import SourceMapping
 from app.services.product_pipeline import PipelineOptions, PipelineResult, run_pipeline_for_url
@@ -38,6 +39,25 @@ def _result_to_dict(result: PipelineResult) -> dict:
     }
 
 
+def _run_pipeline_for_urls(self, urls: list[str], options: dict | None) -> dict:
+    """여러 URL을 순서대로 파이프라인에 태우고, 하나 실패해도 나머지는 계속 진행한다.
+    `refresh_all_registered_products_task`와 `run_pipeline_for_urls_task`가 공유한다.
+    """
+    pipeline_options = _options_from_dict(options)
+    succeeded: list[dict] = []
+    failed: list[dict] = []
+
+    for idx, url in enumerate(urls, start=1):
+        self.update_state(state="PROGRESS", meta={"step": f"({idx}/{len(urls)}) 처리 중: {url}"})
+        try:
+            result = asyncio.run(run_pipeline_for_url(url, pipeline_options))
+            succeeded.append(_result_to_dict(result))
+        except Exception as exc:
+            failed.append({"url": url, "error": str(exc)})
+
+    return {"total": len(urls), "succeeded": succeeded, "failed": failed}
+
+
 @celery_app.task(name="pipeline_tasks.run_pipeline_for_url", bind=True)
 def run_pipeline_for_url_task(self, url: str, options: dict | None = None) -> dict:
     """웹 대시보드의 "등록하기" 버튼이 호출하는 태스크 — CLI 스크립트와 동일한
@@ -50,6 +70,12 @@ def run_pipeline_for_url_task(self, url: str, options: dict | None = None) -> di
     self.update_state(state="PROGRESS", meta={"step": "크롤링 및 등록 진행 중"})
     result = asyncio.run(run_pipeline_for_url(url, _options_from_dict(options)))
     return _result_to_dict(result)
+
+
+@celery_app.task(name="pipeline_tasks.run_pipeline_for_urls", bind=True)
+def run_pipeline_for_urls_task(self, urls: list[str], options: dict | None = None) -> dict:
+    """대시보드의 "섹션 일괄 등록" 버튼 — 사용자가 검토한 URL 목록을 순서대로 신규 등록한다."""
+    return _run_pipeline_for_urls(self, urls, options)
 
 
 @celery_app.task(name="pipeline_tasks.refresh_all_registered_products", bind=True)
@@ -67,17 +93,15 @@ def refresh_all_registered_products_task(self, options: dict | None = None) -> d
             for row in session.query(SourceMapping).filter_by(source_platform=SourcePlatform.ABC_MART).all()
             if row.source_url
         ]
+    return _run_pipeline_for_urls(self, urls, options)
 
-    pipeline_options = _options_from_dict(options)
-    succeeded: list[dict] = []
-    failed: list[dict] = []
 
-    for idx, url in enumerate(urls, start=1):
-        self.update_state(state="PROGRESS", meta={"step": f"({idx}/{len(urls)}) 갱신 중: {url}"})
-        try:
-            result = asyncio.run(run_pipeline_for_url(url, pipeline_options))
-            succeeded.append(_result_to_dict(result))
-        except Exception as exc:
-            failed.append({"url": url, "error": str(exc)})
-
-    return {"total": len(urls), "succeeded": succeeded, "failed": failed}
+@celery_app.task(name="pipeline_tasks.discover_category_urls", bind=True)
+def discover_category_urls_task(self, category_url: str, max_products: int = 30, max_pages: int = 1) -> dict:
+    """대시보드의 "URL 목록 가져오기" 버튼 — 카테고리/랭킹 목록 페이지에서 상품 URL을 모은다.
+    등록은 하지 않고 목록만 돌려줘서, 사용자가 검토한 뒤 일괄 등록으로 넘길 수 있게 한다.
+    """
+    self.update_state(state="PROGRESS", meta={"step": "카테고리 페이지에서 상품 URL 수집 중..."})
+    scraper = ABCMartScraper(headless=True)
+    urls = asyncio.run(scraper.fetch_category_product_urls(category_url, max_products=max_products, max_pages=max_pages))
+    return {"urls": urls}
