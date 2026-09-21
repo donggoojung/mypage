@@ -36,7 +36,9 @@ TYPING_DELAY_MS_RANGE = (100, 150)
 # 어떻게 이어지는지는 아직 확인 전이다.
 SELECTOR_SIZE_OPTIONS = ".size-list .btn-prod-size, .size-option li, .option-size li"
 ADD_TO_CART_BUTTON_TEXTS = ["장바구니 담기", "장바구니", "바로구매", "바로 구매"]
-CHECKOUT_BUTTON_TEXTS = ["주문하기", "구매하기", "선택상품 주문"]
+# "바로구매"는 장바구니 페이지에서 개별 상품 줄에 있는 버튼으로 2026-09-21 devtools로
+# 확인됨 — 전체선택 후 누르는 별도의 "주문하기" 버튼이 있는지는 아직 미확인이라 후보로 남겨둔다.
+CHECKOUT_BUTTON_TEXTS = ["주문하기", "구매하기", "선택상품 주문", "바로구매"]
 PAYMENT_METHOD_SECTION_TEXTS = ["결제수단", "결제 수단"]
 FINAL_PAYMENT_BUTTON_TEXTS = ["결제하기", "최종결제", "결제 하기"]
 ORDER_NUMBER_LABEL_PATTERN = re.compile(r"주문\s*번호\s*[:：]?\s*([A-Za-z0-9-]+)")
@@ -112,6 +114,18 @@ class PlaywrightRPAClient(BaseRPAClient):
                 await context.add_cookies(self._session_cookies)
                 page = await context.new_page()
 
+                # 2026-09-21 실사이트 devtools로 확인됨: "장바구니 담기"를 누르면 HTML
+                # 버튼이 아니라 브라우저 자체 confirm() 팝업("장바구니로 이동하시겠습니까?")이
+                # 뜬다. Playwright는 이런 팝업을 처리하는 핸들러가 없으면 자동으로 "취소"
+                # 처리해버려서, 장바구니 페이지로 못 넘어가고 계속 상품페이지에 남아있었다.
+                # 흐름을 앞으로 진행시키는 게 목적이니 모든 팝업을 항상 "확인"으로 수락한다.
+                # (핸들러가 sync 람다면 dialog.accept()의 코루틴이 await 안 돼서 조용히
+                # 아무 일도 안 일어나므로, 반드시 async 함수로 등록해야 한다.)
+                async def _accept_dialog(dialog):
+                    await dialog.accept()
+
+                page.on("dialog", _accept_dialog)
+
                 await self._goto_product_and_select_size(page, style_code, size)
                 await self._proceed_to_checkout(page)
                 await self._fill_shipping_fields(page, shipping_info)
@@ -155,7 +169,12 @@ class PlaywrightRPAClient(BaseRPAClient):
                 page.get_by_text(label, exact=False)
             )
             if await button.count() > 0:
-                await button.first.click()
+                # 클릭 → confirm() 팝업 자동수락 → 장바구니 페이지(/cart/cart-list)로
+                # 이동하는 흐름 전체가 끝날 때까지 기다린다. expect_navigation 없이 클릭만
+                # 하고 바로 리턴하면, 다음 단계(_proceed_to_checkout)가 아직 이동 중인
+                # 상품페이지에서 체크아웃 버튼을 찾다가 실패한다.
+                async with page.expect_navigation(wait_until="domcontentloaded", timeout=15000):
+                    await button.first.click()
                 return
         raise RPAPurchaseError(f"장바구니 담기 버튼을 찾지 못했습니다 (시도한 문구: {ADD_TO_CART_BUTTON_TEXTS}).")
 
@@ -166,8 +185,8 @@ class PlaywrightRPAClient(BaseRPAClient):
                 page.get_by_text(label, exact=False)
             )
             if await button.count() > 0:
-                await button.first.click()
-                await page.wait_for_load_state("domcontentloaded")
+                async with page.expect_navigation(wait_until="domcontentloaded", timeout=15000):
+                    await button.first.click()
                 return
         raise RPAPurchaseError(f"체크아웃(주문하기) 버튼을 찾지 못했습니다 (시도한 문구: {CHECKOUT_BUTTON_TEXTS}).")
 
