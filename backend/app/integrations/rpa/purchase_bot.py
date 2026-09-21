@@ -308,9 +308,25 @@ class PlaywrightRPAClient(BaseRPAClient):
         if await zipcode_button.count() == 0:
             raise RPAPurchaseError("'우편번호 찾기' 버튼을 찾지 못했습니다 — 주소 입력 UI 구조를 다시 확인해야 합니다.")
 
-        async with page.context.expect_page(timeout=10000) as popup_info:
-            await zipcode_button.first.click()
-        popup = await popup_info.value
+        # 사람이 직접 누르면 바로 뜨는 팝업이, 자동화가 누르면 안 뜨는 경우가 있었다(클릭
+        # 타이밍/이벤트 차이로 팝업이 막히거나 사이트가 못 받는 경우) — 클릭 전에 잠깐
+        # 화면이 안정되길 기다리고, 안 뜨면 한 번 더 시도한다.
+        popup = None
+        for attempt in range(2):
+            await page.wait_for_timeout(500)
+            try:
+                async with page.context.expect_page(timeout=15000) as popup_info:
+                    await zipcode_button.first.click()
+                popup = await popup_info.value
+                break
+            except Exception:
+                print(f"  [진단] 우편번호 팝업 대기 {attempt + 1}번째 시도 실패, 재시도합니다.", flush=True)
+        if popup is None:
+            raise RPAPurchaseError(
+                "'우편번호 찾기'를 눌러도 팝업 창이 뜨지 않았습니다 — 자동화 클릭과 실제 클릭의 "
+                "차이(팝업 차단 등)일 수 있습니다. 지금 뜬 화면에서 직접 눌러보고 무슨 일이 "
+                "일어나는지(새 창/화면 안 팝업 등) 확인해 주세요."
+            )
         await popup.wait_for_load_state("domcontentloaded")
 
         search_input = popup.locator("input[type='text']").first
