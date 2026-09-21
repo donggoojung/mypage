@@ -98,7 +98,10 @@ def parse_args() -> argparse.Namespace:
 
 
 def _load_urls_from_file(path: str) -> list[str]:
-    lines = Path(path).read_text(encoding="utf-8").splitlines()
+    # utf-8-sig: 메모장/파워셀(Out-File -Encoding utf8)이 파일 맨 앞에 넣는 보이지 않는
+    # BOM 문자를 자동으로 제거한다. BOM이 남아있으면 첫 줄 URL 앞에 눈에 안 보이는 문자가
+    # 붙어서 "invalid URL" 같은 알 수 없는 에러로 이어진다.
+    lines = Path(path).read_text(encoding="utf-8-sig").splitlines()
     return [line.strip() for line in lines if line.strip() and not line.strip().startswith("#")]
 
 
@@ -197,28 +200,44 @@ async def run_pipeline_for_url(url: str, args: argparse.Namespace) -> PipelineRe
 
     # --- [5/5] 쿠팡 등록 준비/실행 ---
     print("\n[5/5] 쿠팡 상품 등록 준비 중...")
+    listing = await asyncio.to_thread(
+        _register_coupang_sync,
+        product_id,
+        args.display_category_code,
+        selling_price,
+        scraped.size_stock or {},
+        args.request_approval,
+    )
+
+    print(f"  market_listing_id={listing.listing_id}")
+    print(f"  쿠팡 상품ID(sellerProductId)={listing.market_product_id}")
+    print(f"  상태={listing.status.value}, 등록가={listing.selling_price:,}원")
+    if not args.request_approval:
+        print("  (--request-approval 없이 실행해서 '임시저장' 상태입니다 — 실제 판매 심사요청은 안 나갔습니다.)")
+
+    return PipelineResult(
+        url=url,
+        style_code=scraped.style_code,
+        listing_id=listing.listing_id,
+        market_product_id=listing.market_product_id,
+        selling_price=listing.selling_price,
+    )
+
+
+def _register_coupang_sync(product_id, display_category_code, selling_price, size_stock, request_approval):
+    """register_product_for_master_product는 내부적으로 asyncio.run()을 쓰는 동기 함수라,
+    이미 이벤트 루프가 돌고 있는 이 스크립트(async main) 안에서 직접 부르면
+    "asyncio.run() cannot be called from a running event loop" 에러가 난다.
+    별도 스레드(asyncio.to_thread)에서 새 DB 세션과 함께 실행해 이 충돌을 피한다.
+    """
     with SessionLocalSync() as session:
-        listing = register_product_for_master_product(
+        return register_product_for_master_product(
             session=session,
             product_id=product_id,
-            display_category_code=args.display_category_code,
+            display_category_code=display_category_code,
             selling_price=selling_price,
-            size_stock=scraped.size_stock or {},
-            request_approval=args.request_approval,
-        )
-
-        print(f"  market_listing_id={listing.listing_id}")
-        print(f"  쿠팡 상품ID(sellerProductId)={listing.market_product_id}")
-        print(f"  상태={listing.status.value}, 등록가={listing.selling_price:,}원")
-        if not args.request_approval:
-            print("  (--request-approval 없이 실행해서 '임시저장' 상태입니다 — 실제 판매 심사요청은 안 나갔습니다.)")
-
-        return PipelineResult(
-            url=url,
-            style_code=scraped.style_code,
-            listing_id=listing.listing_id,
-            market_product_id=listing.market_product_id,
-            selling_price=listing.selling_price,
+            size_stock=size_stock,
+            request_approval=request_approval,
         )
 
 
