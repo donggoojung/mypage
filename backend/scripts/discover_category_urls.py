@@ -43,6 +43,13 @@ def parse_args() -> argparse.Namespace:
         "--max", type=int, default=30, help="가져올 상품 URL 최대 개수 (기본 30 — 한 번에 너무 많이 모으지 않도록 제한)"
     )
     parser.add_argument("--out", default="scripts/urls.txt", help="저장할 파일 경로 (기본 scripts/urls.txt)")
+    parser.add_argument(
+        "--max-pages",
+        type=int,
+        default=10,
+        help="몇 페이지까지 넘기며 모을지 (기본 10). 사이트가 `?page=N` 방식이 아니라 "
+        "rowsPerPage처럼 한 URL에 개수를 지정하는 방식이면 1로 두고, URL에 직접 개수를 늘려서 넣는다.",
+    )
     parser.add_argument("--headless", action="store_true")
     return parser.parse_args()
 
@@ -52,7 +59,9 @@ async def main() -> None:
     scraper = ABCMartScraper(headless=args.headless)
 
     print(f"카테고리 페이지에서 상품 URL 수집 중: {args.category_url} (최대 {args.max}개)")
-    urls = await scraper.fetch_category_product_urls(args.category_url, max_products=args.max)
+    urls = await scraper.fetch_category_product_urls(
+        args.category_url, max_products=args.max, max_pages=args.max_pages
+    )
 
     if not urls:
         print("\n상품 URL을 하나도 못 찾았습니다 — 카테고리 페이지 구조가 예상과 다를 수 있습니다.")
