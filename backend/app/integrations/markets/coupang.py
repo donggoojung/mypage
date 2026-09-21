@@ -33,9 +33,11 @@ from app.models.master_product import MasterProduct
 
 COUPANG_API_HOST = "https://api-gateway.coupang.com"
 PRODUCT_REGISTRATION_PATH = "/v2/providers/seller_api/apis/api/v1/marketplace/seller-products"
-# 주의 — 아래 두 경로/응답 필드명도 실API 미검증이다 (파일 상단 설명 참고).
-# 실제 키로 처음 호출할 때는 반드시 raw 응답을 한번 로그로 찍어 필드명이 맞는지 확인할 것.
-SHIPPING_PLACE_LIST_PATH = "/v2/providers/openapi/apis/api/v4/vendors/{vendor_id}/shipping-place/list"
+# 2026-09-21 실계정 테스트로 확인됨: 출고지 조회 경로는 openapi가 아니라
+# marketplace_openapi이고, vendorId를 경로에 안 넣는다(API 키로 자동 식별됨) — 처음에
+# 추측했던 경로(v4/vendors/{id}/shipping-place/list)는 404였다.
+SHIPPING_PLACE_LIST_PATH = "/v2/providers/marketplace_openapi/apis/api/v1/vendor/shipping-place/outbound"
+# 주의 — 반품지 조회 경로/응답 필드명은 아직 실API 미검증이다 (파일 상단 설명 참고).
 RETURN_SHIPPING_CENTER_LIST_PATH = "/v2/providers/openapi/apis/api/v4/vendors/{vendor_id}/returnShippingCenters"
 ORDER_SHEETS_PATH = "/v2/providers/openapi/apis/api/v4/vendors/{vendor_id}/ordersheets"
 CATEGORY_PREDICTION_PATH = "/v2/providers/openapi/apis/api/v1/categorization/predict"
@@ -272,7 +274,10 @@ class CoupangWingClient:
         return await self._real_fetch_return_shipping_centers(vendor_id)
 
     async def _real_fetch_shipping_places(self, vendor_id: str) -> list[dict]:
-        path = SHIPPING_PLACE_LIST_PATH.format(vendor_id=vendor_id)
+        # 이 엔드포인트는 vendorId를 경로에 넣지 않는다 — API 키(액세스/시크릿)로 벤더가
+        # 자동 식별된다. vendor_id 인자는 다른 실제 API(반품지 조회 등)와 시그니처를
+        # 맞추기 위해 남겨뒀을 뿐 여기서는 쓰지 않는다.
+        path = SHIPPING_PLACE_LIST_PATH
         query = "?pageNum=1&pageSize=50"
         headers = _build_authorization_header(
             method="GET",
