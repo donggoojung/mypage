@@ -265,13 +265,21 @@ class PlaywrightRPAClient(BaseRPAClient):
             value = field_values[field_key]
             filled = False
             for label_pattern in candidates:
-                row = page.locator("tr").filter(has_text=re.compile(label_pattern))
-                if await row.count() == 0:
-                    continue
-                # 같은 라벨이 위쪽 "주문 고객정보" 섹션에도 있을 수 있어, 나중에 나오는
-                # (= "배송 정보" 섹션의) 행을 우선한다.
-                target = row.last.locator("input").first
-                if await target.count() == 0:
+                rows = page.locator("tr").filter(has_text=re.compile(label_pattern))
+                row_count = await rows.count()
+                # 2026-09-21 devtools로 확인됨: 배송수단(일반택배/편의점픽업 등)별로 같은 라벨의
+                # 행이 미리 여러 개 만들어져 있고 안 쓰는 건 style="display:none"으로 숨겨둔다
+                # (<tr name="normalDlvy">, <tr name="pickupCVS" style="display:none">). "마지막
+                # 행"이 아니라 "실제로 화면에 보이는(visible) 행"을 찾아야 정확하다.
+                target = None
+                for i in range(row_count):
+                    candidate_input = rows.nth(i).locator("input").first
+                    if await candidate_input.count() == 0:
+                        continue
+                    if await candidate_input.is_visible():
+                        target = candidate_input
+                        break
+                if target is None:
                     continue
                 await target.click()
                 await target.fill("")
