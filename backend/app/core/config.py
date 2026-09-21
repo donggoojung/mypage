@@ -35,6 +35,16 @@ class Settings(BaseSettings):
     coupang_access_key: str = ""
     coupang_secret_key: str = ""
     coupang_vendor_id: str = ""
+    # 반품지 조회 API(returnShippingCenters)가 WING 화면엔 있는 반품지를 빈 배열로
+    # 돌려주는 문제(캐시 지연으로 추정)가 있을 때, 이 값을 채워두면 API 조회를 건너뛰고
+    # 바로 이 반품지를 쓴다. WING > 판매자정보 > 주소록/배송정보관리에서 반품지 "수정"
+    # 눌러 반품지코드/주소를 확인해 채운다. 전부 비워두면(기본값) 예전처럼 API로 자동 조회한다.
+    coupang_return_center_code: str = ""
+    coupang_return_charge_name: str = ""
+    coupang_return_zip_code: str = ""
+    coupang_return_address: str = ""
+    coupang_return_address_detail: str = ""
+    coupang_return_contact_number: str = ""
     esm_master_id: str = ""
     esm_api_key: str = ""
 

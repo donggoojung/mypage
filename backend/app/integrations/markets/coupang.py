@@ -415,12 +415,30 @@ async def resolve_seller_info(settings: Settings | None = None, use_mock: bool |
             "사용 가능한(usable) 출고지가 쿠팡 계정에 없습니다. WING 판매자센터에서 출고지를 먼저 등록해주세요."
         )
 
+    # 반품지 조회 API(returnShippingCenters)가 WING 화면엔 "사용중"으로 실제 존재하는
+    # 반품지를 빈 배열로 돌려주는 문제(캐시 지연으로 추정, 2026-09-21 실계정 확인됨)가
+    # 있어, COUPANG_RETURN_CENTER_CODE를 .env에 채워두면 API 조회를 건너뛰고 그 값을
+    # 바로 쓴다. 비워두면 기존처럼 API로 자동 조회한다.
+    if settings.coupang_return_center_code:
+        print("  [진단] 반품지: .env 수동 지정값 사용 (API 조회 건너뜀)", flush=True)
+        return {
+            "delivery_company_code": "CJGLS",
+            "outbound_shipping_place_code": str(outbound.get("outboundShippingPlaceCode", "")),
+            "return_center_code": settings.coupang_return_center_code,
+            "return_charge_name": settings.coupang_return_charge_name,
+            "company_contact_number": settings.coupang_return_contact_number,
+            "return_zip_code": settings.coupang_return_zip_code,
+            "return_address": settings.coupang_return_address,
+            "return_address_detail": settings.coupang_return_address_detail,
+        }
+
     return_centers = await client.fetch_return_shipping_centers(vendor_id)
     print(f"  [진단] 반품지 응답 원본: {return_centers}", flush=True)
     return_center = next((r for r in return_centers if r.get("usable")), None)
     if return_center is None:
         raise CoupangRegistrationError(
-            "사용 가능한(usable) 반품지가 쿠팡 계정에 없습니다. WING 판매자센터에서 반품지를 먼저 등록해주세요."
+            "사용 가능한(usable) 반품지가 쿠팡 계정에 없습니다. WING 판매자센터에서 반품지를 먼저 등록해주세요 "
+            "(또는 .env의 COUPANG_RETURN_CENTER_CODE 등을 채워서 수동으로 지정하세요)."
         )
     place_address = (return_center.get("placeAddresses") or [{}])[0]
 
