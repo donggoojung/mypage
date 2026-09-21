@@ -39,6 +39,11 @@ SELECTOR_PRICE = ".prod-price .price, .sale-price"
 # 실사이트 구조: <ul class="size-list"><li>...<button class="btn-prod-size">260</button></li></ul>
 SELECTOR_SIZE_OPTIONS = ".size-list .btn-prod-size, .size-option li, .option-size li"
 
+# 주의 — 실사이트 미검증(카테고리/목록 페이지는 아직 devtools로 확인 못함).
+# 상품 목록에서 결과가 0개로 나오면 이 셀렉터를 F12로 실제 값 확인 후 조정해야 한다.
+SELECTOR_PRODUCT_LINK = "a[href*='/product/']"
+CATEGORY_PAGE_QUERY_PARAM = "page"
+
 
 class ABCMartScraper(BaseScraper):
     """ABC마트 상품 상세 URL을 파싱하는 실크롤러."""
@@ -82,6 +87,73 @@ class ABCMartScraper(BaseScraper):
                 return await self._parse_product_page(page, product_url)
             finally:
                 await browser.close()
+
+    async def fetch_category_product_urls(
+        self, category_url: str, max_products: int = 50, max_pages: int = 10
+    ) -> list[str]:
+        """카테고리/섹션 목록 페이지를 순회하며 상품 상세 URL을 모은다 (배치 등록용).
+
+        주의 — 실사이트 미검증: SELECTOR_PRODUCT_LINK와 `?page=N` 페이지네이션 방식은
+        상세 페이지 셀렉터처럼 devtools로 확인된 값이 아니다. 결과가 0개면 실제 목록
+        페이지를 F12로 열어 SELECTOR_PRODUCT_LINK를 조정해야 한다.
+
+        전체 사이트를 한 번에 긁는 기능은 의도적으로 지원하지 않는다 — `max_products`로
+        섹션 1개당 가져올 상품 수를 제한해, 사람이 결과를 한번 검토하고 등록할 수 있게 한다.
+        """
+        urls: list[str] = []
+        seen: set[str] = set()
+
+        async with async_playwright() as playwright:
+            browser = await playwright.chromium.launch(**chromium_launch_kwargs(self.headless))
+            try:
+                context = await browser.new_context(**new_context_kwargs())
+                await context.add_init_script(STEALTH_INIT_SCRIPT)
+                page = await context.new_page()
+
+                for page_num in range(1, max_pages + 1):
+                    if len(urls) >= max_products:
+                        break
+
+                    await asyncio.sleep(random.uniform(self.min_delay, self.max_delay))
+                    page_url = self._with_page_param(category_url, page_num)
+                    await page.goto(page_url, wait_until="domcontentloaded", timeout=20000)
+
+                    try:
+                        await page.wait_for_selector(SELECTOR_PRODUCT_LINK, timeout=10000)
+                    except Exception:
+                        break  # 상품이 없거나(마지막 페이지) 목록 페이지 구조가 예상과 다름
+
+                    try:
+                        hrefs = await page.locator(SELECTOR_PRODUCT_LINK).evaluate_all("els => els.map(e => e.href)")
+                    except Exception:
+                        break
+
+                    # 같은 페이지 안의 중복 링크도 걸러지도록, 확인과 동시에 seen에 추가한다.
+                    new_hrefs = []
+                    for href in hrefs:
+                        if href and href not in seen:
+                            seen.add(href)
+                            new_hrefs.append(href)
+                    if not new_hrefs:
+                        break  # 새로 나온 상품이 없으면(마지막 페이지 반복) 중단
+
+                    for href in new_hrefs:
+                        urls.append(href)
+                        if len(urls) >= max_products:
+                            break
+            finally:
+                await browser.close()
+
+        return urls[:max_products]
+
+    @staticmethod
+    def _with_page_param(url: str, page_num: int) -> str:
+        from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+
+        parts = urlsplit(url)
+        query = dict(parse_qsl(parts.query))
+        query[CATEGORY_PAGE_QUERY_PARAM] = str(page_num)
+        return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query), parts.fragment))
 
     async def _parse_product_page(self, page: Page, product_url: str) -> ScrapedProduct:
         product_data = await self._extract_json_ld(page)

@@ -55,3 +55,27 @@ async def test_fetch_product_by_style_code_not_implemented():
     scraper = ABCMartScraper()
     with pytest.raises(NotImplementedError):
         await scraper.fetch_product("CW2288-111")
+
+
+@pytest.mark.asyncio
+async def test_fetch_category_product_urls_dedupes_and_truncates():
+    scraper = ABCMartScraper(headless=True, min_delay=0, max_delay=0)
+    url = _file_url("abc_mart_category_listing.html")
+
+    urls = await scraper.fetch_category_product_urls(url, max_products=3)
+
+    assert len(urls) == 3
+    assert len(set(urls)) == 3  # 중복 없음
+
+
+@pytest.mark.asyncio
+async def test_fetch_category_product_urls_stops_when_no_new_links_across_pages():
+    scraper = ABCMartScraper(headless=True, min_delay=0, max_delay=0)
+    url = _file_url("abc_mart_category_listing.html")
+
+    # 픽스처는 고정 파일이라 페이지 2도 페이지 1과 똑같은 링크를 반환한다 —
+    # "새 상품이 없으면 중단"하는 페이지네이션 종료 로직을 검증한다.
+    urls = await scraper.fetch_category_product_urls(url, max_products=10, max_pages=5)
+
+    assert len(urls) == 5  # 목록에 있는 고유 상품 링크 개수 (중복 1개 제외)
+    assert len(set(urls)) == 5
