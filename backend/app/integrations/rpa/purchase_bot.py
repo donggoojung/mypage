@@ -236,9 +236,13 @@ class PlaywrightRPAClient(BaseRPAClient):
         ABC마트 계정 소유자 본인 정보로 배송지가 채워지는 심각한 오류가 난다 — 반드시
         "신규입력"으로 바꾼 뒤 실제 수령인 정보를 입력해야 한다.
 
-        라벨은 "이름"/"휴대폰번호"로 확인됐지만, 같은 페이지 위쪽 "주문 고객정보" 섹션에도
-        동일한 라벨이 있어 라벨만으로는 어느 칸인지 모호하다 — "신규입력" 전환 후 나타나는
-        입력칸(마지막에 매칭되는 것)을 우선한다.
+        2026-09-21 실사이트(로그인 상태) devtools로 확인됨: 이 폼은 `<table class="tbl-form">`
+        구조라, 칸 이름("이름", "휴대폰번호")이 `<label>` 태그로 입력칸과 연결돼 있지 않고
+        그냥 `<th>` 텍스트다 — 그래서 label 기준 검색(get_by_label)은 일부만 우연히 맞고
+        (이름) 일부는 못 찾는다(휴대폰번호). 대신 "그 텍스트가 있는 행(tr) 안에서 input을
+        찾는" 방식으로 통일한다 — abc_mart.py에서 검증된 사이즈버튼도 같은 tbl-form 구조 안에
+        있었다. 같은 라벨이 위쪽 "주문 고객정보" 섹션에도 있어 여러 행이 매칭될 수 있으므로,
+        나중에 나오는(= "배송 정보" 섹션의) 행을 우선한다.
 
         주소(우편번호 찾기 팝업)는 아직 실사이트 구조 미확인 — 팝업/iframe 내부 선택자를
         모르는 채로 잘못 클릭하면 엉뚱한 주소가 들어갈 수 있어, 여기서는 시도하지 않고
@@ -250,8 +254,8 @@ class PlaywrightRPAClient(BaseRPAClient):
 
         delay = random.randint(*TYPING_DELAY_MS_RANGE)
         field_labels = {
-            "recipient_name": ["수령인", "받는\\s*사람", "이름"],
-            "recipient_phone": ["연락처", "휴대폰\\s*번호", "휴대폰번호"],
+            "recipient_name": ["이름", "수령인", "받는\\s*사람"],
+            "recipient_phone": ["휴대폰번호", "연락처", "휴대폰\\s*번호"],
         }
         field_values = {
             "recipient_name": shipping_info.recipient_name,
@@ -261,13 +265,14 @@ class PlaywrightRPAClient(BaseRPAClient):
             value = field_values[field_key]
             filled = False
             for label_pattern in candidates:
-                field = page.get_by_label(re.compile(label_pattern))
-                count = await field.count()
-                if count == 0:
+                row = page.locator("tr").filter(has_text=re.compile(label_pattern))
+                if await row.count() == 0:
                     continue
                 # 같은 라벨이 위쪽 "주문 고객정보" 섹션에도 있을 수 있어, 나중에 나오는
-                # (= "배송 정보" 섹션의) 입력칸을 우선한다.
-                target = field.last
+                # (= "배송 정보" 섹션의) 행을 우선한다.
+                target = row.last.locator("input").first
+                if await target.count() == 0:
+                    continue
                 await target.click()
                 await target.fill("")
                 await target.type(value, delay=delay)
