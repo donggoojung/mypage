@@ -12,6 +12,7 @@ celery_app = Celery(
         "app.workers.tasks.crawl_tasks",
         "app.workers.tasks.asset_generation_tasks",
         "app.workers.tasks.order_tasks",
+        "app.workers.tasks.pipeline_tasks",
     ],
 )
 

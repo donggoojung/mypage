@@ -26,43 +26,20 @@ URL 1개만 처리하거나(단건), 여러 URL을 텍스트 파일로 넣어 �
 DB에는 MasterProduct/SourceMapping/GeneratedAsset이 실제로 upsert된다
 (fulfillment 개발 DB를 사용 — 테스트 DB가 아니다).
 
-참고: DB에 한번 저장된 상품의 가격/재고를 "그 이후에도" 계속 최신으로 유지하려면,
-이 스크립트를 반복 실행하는 대신 Celery beat로 등록된 주기 작업
-(`crawl_tasks.refresh_all_source_mappings`, 기본 30분마다)을 쓴다 — 아래 안내 참고.
+참고: 브라우저에서 URL만 붙여넣고 버튼 클릭으로 실행하고 싶다면, 이 스크립트 대신
+웹 대시보드(`uvicorn app.main:app`으로 서버를 띄운 뒤 브라우저로 접속)를 쓸 수 있다 —
+같은 로직(app/services/product_pipeline.py)을 공유한다.
 """
 
 import argparse
 import asyncio
 import sys
-from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
 
-import httpx
-
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from app.core.database import SessionLocalSync  # noqa: E402
-from app.integrations.markets.coupang import (  # noqa: E402
-    CoupangRegistrationError,
-    register_product_for_master_product,
-)
-from app.integrations.scrapers.abc_mart import ABCMartScraper  # noqa: E402
-from app.models.enums import GenerationStatus, MarketType, SourcePlatform  # noqa: E402
-from app.models.generated_asset import GeneratedAsset  # noqa: E402
-from app.models.master_product import MasterProduct  # noqa: E402
-from app.models.source_mapping import SourceMapping  # noqa: E402
-from app.services.asset_pipeline import generate_product_assets  # noqa: E402
-from app.services.margin_engine import ReverseMarginError, calculate_selling_price_for_platform  # noqa: E402
-
-
-@dataclass
-class PipelineResult:
-    url: str
-    style_code: str
-    listing_id: int
-    market_product_id: str | None
-    selling_price: Decimal
+from app.services.product_pipeline import PipelineOptions, PipelineResult, run_pipeline_for_url  # noqa: E402
 
 
 def parse_args() -> argparse.Namespace:
@@ -105,145 +82,24 @@ def _load_urls_from_file(path: str) -> list[str]:
     return [line.strip() for line in lines if line.strip() and not line.strip().startswith("#")]
 
 
-async def run_pipeline_for_url(url: str, args: argparse.Namespace) -> PipelineResult:
-    """상품 URL 1개에 대해 [크롤링→마진계산→DB저장→AI이미지→쿠팡등록] 5단계를 전부 실행한다."""
-
-    # --- [1/5] 실제 ABC마트 크롤링 ---
-    print(f"[1/5] ABC마트 크롤링 중: {url}")
-    scraper = ABCMartScraper(headless=args.headless)
-    scraped = await scraper.fetch_product_by_url(url)
-
-    if not scraped.style_code or scraped.price <= 0:
-        raise ValueError(f"품번 또는 가격 추출 실패 (style_code={scraped.style_code!r}, price={scraped.price})")
-
-    print(
-        f"  브랜드={scraped.brand_name!r}, 상품명={scraped.product_name!r}, "
-        f"품번={scraped.style_code}, 원가={scraped.price:,.0f}원"
-    )
-    print(f"  사이즈 재고: {scraped.size_stock or '(추출 실패)'}")
-
-    # --- [2/5] 마진 엔진 (쿠팡 채널 기준 판매가) ---
-    print("\n[2/5] 마진 엔진으로 쿠팡 채널 판매가 계산 중...")
-    purchase_cost = Decimal(str(scraped.price))
-    selling_price = calculate_selling_price_for_platform(
-        market_type=MarketType.COUPANG,
-        purchase_cost=purchase_cost,
+def _options_from_args(args: argparse.Namespace) -> PipelineOptions:
+    return PipelineOptions(
+        headless=args.headless,
         fixed_margin=args.fixed_margin,
-        source_shipping_cost=args.source_shipping_cost,
-        customer_shipping_charge=args.customer_shipping_charge,
         target_margin_rate=args.target_margin_rate,
+        customer_shipping_charge=args.customer_shipping_charge,
+        source_shipping_cost=args.source_shipping_cost,
+        display_category_code=args.display_category_code,
+        category=args.category,
+        color_tone=args.color_tone,
+        request_approval=args.request_approval,
     )
-    print(f"  원가 {purchase_cost:,.0f}원 → 쿠팡 판매가 {selling_price:,}원")
-
-    # --- [3/5] DB에 MasterProduct + SourceMapping upsert ---
-    print("\n[3/5] DB에 상품 정보 저장 중...")
-    with SessionLocalSync() as session:
-        product = session.query(MasterProduct).filter_by(style_code=scraped.style_code).first()
-        if product is None:
-            product = MasterProduct(style_code=scraped.style_code)
-            session.add(product)
-        product.brand_name = scraped.brand_name or product.brand_name or "미상"
-        product.product_name = scraped.product_name or product.product_name or scraped.style_code
-        product.raw_specs_json = scraped.raw_specs or product.raw_specs_json or {}
-        session.flush()
-
-        mapping = (
-            session.query(SourceMapping)
-            .filter_by(product_id=product.product_id, source_platform=SourcePlatform.ABC_MART)
-            .first()
-        )
-        if mapping is None:
-            mapping = SourceMapping(product_id=product.product_id, source_platform=SourcePlatform.ABC_MART)
-            session.add(mapping)
-        mapping.source_url = url
-        mapping.source_image_url = scraped.image_url
-        mapping.source_price = scraped.price
-        mapping.size_stock_json = scraped.size_stock
-        session.commit()
-        product_id = product.product_id
-        brand_name = product.brand_name
-        print(f"  product_id={product_id} 로 저장 완료 (style_code={product.style_code})")
-
-    # --- [4/5] AI 이미지/상세페이지 생성 ---
-    print("\n[4/5] AI 이미지/상세페이지 생성 중...")
-    if not scraped.image_url:
-        print("  원본 이미지 URL이 없어 AI 이미지 생성을 건너뜁니다.")
-    else:
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            response = await client.get(scraped.image_url)
-            response.raise_for_status()
-            source_image_bytes = response.content
-
-        assets = await generate_product_assets(
-            style_code=scraped.style_code,
-            brand_name=brand_name,
-            product_name=scraped.product_name,
-            category=args.category,
-            color_tone=args.color_tone,
-            specs=scraped.raw_specs or {},
-            size_stock=scraped.size_stock or {},
-            source_image_bytes=source_image_bytes,
-        )
-        print(f"  썸네일     : {assets.thumbnail_url}")
-        print(f"  상세페이지 : {assets.detail_page_url}")
-
-        with SessionLocalSync() as session:
-            asset = session.query(GeneratedAsset).filter_by(product_id=product_id).first()
-            if asset is None:
-                asset = GeneratedAsset(product_id=product_id)
-                session.add(asset)
-            asset.ai_thumbnail_url = assets.thumbnail_url
-            asset.ai_detail_image_url = assets.detail_page_url
-            asset.exif_cleared = True
-            asset.generation_status = GenerationStatus.COMPLETED
-            session.commit()
-
-    # --- [5/5] 쿠팡 등록 준비/실행 ---
-    print("\n[5/5] 쿠팡 상품 등록 준비 중...")
-    listing = await asyncio.to_thread(
-        _register_coupang_sync,
-        product_id,
-        args.display_category_code,
-        selling_price,
-        scraped.size_stock or {},
-        args.request_approval,
-    )
-
-    print(f"  market_listing_id={listing.listing_id}")
-    print(f"  쿠팡 상품ID(sellerProductId)={listing.market_product_id}")
-    print(f"  상태={listing.status.value}, 등록가={listing.selling_price:,}원")
-    if not args.request_approval:
-        print("  (--request-approval 없이 실행해서 '임시저장' 상태입니다 — 실제 판매 심사요청은 안 나갔습니다.)")
-
-    return PipelineResult(
-        url=url,
-        style_code=scraped.style_code,
-        listing_id=listing.listing_id,
-        market_product_id=listing.market_product_id,
-        selling_price=listing.selling_price,
-    )
-
-
-def _register_coupang_sync(product_id, display_category_code, selling_price, size_stock, request_approval):
-    """register_product_for_master_product는 내부적으로 asyncio.run()을 쓰는 동기 함수라,
-    이미 이벤트 루프가 돌고 있는 이 스크립트(async main) 안에서 직접 부르면
-    "asyncio.run() cannot be called from a running event loop" 에러가 난다.
-    별도 스레드(asyncio.to_thread)에서 새 DB 세션과 함께 실행해 이 충돌을 피한다.
-    """
-    with SessionLocalSync() as session:
-        return register_product_for_master_product(
-            session=session,
-            product_id=product_id,
-            display_category_code=display_category_code,
-            selling_price=selling_price,
-            size_stock=size_stock,
-            request_approval=request_approval,
-        )
 
 
 async def main() -> None:
     args = parse_args()
     urls = _load_urls_from_file(args.urls_file) if args.urls_file else [args.url]
+    options = _options_from_args(args)
 
     if len(urls) > 1:
         print(f"배치 모드: {len(urls)}개 URL을 순서대로 처리합니다.\n")
@@ -255,8 +111,10 @@ async def main() -> None:
         if len(urls) > 1:
             print(f"\n{'=' * 60}\n[{idx}/{len(urls)}] {url}\n{'=' * 60}")
         try:
-            result = await run_pipeline_for_url(url, args)
+            result = await run_pipeline_for_url(url, options)
             succeeded.append(result)
+            if not args.request_approval:
+                print("  (--request-approval 없이 실행해서 '임시저장' 상태입니다 — 실제 판매 심사요청은 안 나갔습니다.)")
         except Exception as exc:
             print(f"\n실패: {exc}")
             failed.append((url, str(exc)))

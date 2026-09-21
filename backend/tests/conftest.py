@@ -14,6 +14,7 @@ os.environ.setdefault("USE_MOCK_STORAGE", "true")
 import pytest  # noqa: E402
 
 from app.core.database import Base, SessionLocalSync, sync_engine  # noqa: E402
+from app.core.database import engine as async_engine  # noqa: E402
 from app.models import *  # noqa: E402,F401,F403 — Base.metadata에 전 테이블을 등록하기 위해 로드
 
 
@@ -22,6 +23,16 @@ def _create_test_schema():
     Base.metadata.create_all(bind=sync_engine)
     yield
     Base.metadata.drop_all(bind=sync_engine)
+
+
+@pytest.fixture(autouse=True)
+async def _dispose_async_engine():
+    """pytest-asyncio는 테스트마다 새 이벤트루프를 만든다. app.core.database.engine의
+    커넥션 풀이 이전 테스트(다른 루프)의 연결을 계속 들고 있으면 "Event loop is closed"
+    오류가 나므로, 매 테스트 뒤에 풀을 비워 다음 테스트가 새 루프에서 새 연결을 맺게 한다.
+    """
+    yield
+    await async_engine.dispose()
 
 
 @pytest.fixture(autouse=True)
