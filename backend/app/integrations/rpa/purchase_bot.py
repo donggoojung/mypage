@@ -329,14 +329,29 @@ class PlaywrightRPAClient(BaseRPAClient):
             )
         await popup.wait_for_load_state("domcontentloaded")
 
-        search_input = popup.locator("input[type='text']").first
+        # 카카오 우편번호 서비스는 팝업 창 안에 실제 검색 위젯을 iframe으로 한 번 더
+        # 감싸서 넣는 경우가 있다 — popup 최상위에서 못 찾으면 iframe들도 뒤져본다.
+        search_selector = "input[type='text'], input[type='search'], input:not([type])"
+        search_frame = popup.main_frame
+        if await search_frame.locator(search_selector).count() == 0:
+            for frame in popup.frames:
+                if await frame.locator(search_selector).count() > 0:
+                    search_frame = frame
+                    break
+            else:
+                raise RPAPurchaseError(
+                    "우편번호 검색창을 팝업 안에서 찾지 못했습니다 (iframe 구조 포함 확인) — "
+                    "팝업 화면을 캡처해서 확인해야 합니다."
+                )
+
+        search_input = search_frame.locator(search_selector).first
         await search_input.click()
         await search_input.type(shipping_info.shipping_addr, delay=delay)
         await search_input.press("Enter")
 
         # 검색 결과 목록에서 첫 번째(가장 유사도 높은) 항목을 클릭한다 — 고르면 팝업이
         # 자동으로 닫히고 우편번호/도로명주소가 원래 화면에 채워지는 게 표준 동작이다.
-        result_item = popup.locator("li, tr").filter(has_text=re.compile(r"\d"))
+        result_item = search_frame.locator("li, tr").filter(has_text=re.compile(r"\d"))
         try:
             await result_item.first.wait_for(state="visible", timeout=10000)
         except Exception as exc:
