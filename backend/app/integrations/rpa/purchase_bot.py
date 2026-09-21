@@ -364,12 +364,12 @@ class PlaywrightRPAClient(BaseRPAClient):
             ) from exc
         await result_item.first.click()
 
-        # 이 행 안에 입력칸이 3개 있는 걸로 확인됨: [0]=우편번호, [1]=도로명주소(자동채움,
-        # 보통 읽기전용), [2]=상세주소(동/호수 등, 직접 입력). 팝업이 닫히고 [0]에 값이
-        # 채워질 때까지 잠깐 기다린 뒤 확인한다.
-        addr_row = page.locator("tr").filter(has_text=re.compile("주소"))
-        addr_inputs = addr_row.last.locator("input")
-        zip_input = addr_inputs.nth(0)
+        # 2026-09-21 실행 로그로 확인됨: "tr을 '주소' 텍스트로 찾기"는 이제 다른 행과
+        # 헷갈려서(우편번호/주소1/주소2가 서로 다른 행에 나뉘어 있는 걸로 보임) 안정적이지
+        # 않다. 대신 "우편번호 찾기" 버튼(유일하게 존재하는 확실한 기준점)이 속한 행과,
+        # 그 바로 다음에 오는 형제 행들에서 입력칸을 찾는 방식으로 바꾼다.
+        zip_button_row = zipcode_button.locator("xpath=ancestor::tr[1]")
+        zip_input = zip_button_row.locator("input").first
         for _ in range(20):
             if (await zip_input.input_value()).strip():
                 break
@@ -379,13 +379,17 @@ class PlaywrightRPAClient(BaseRPAClient):
         if not zip_value.strip():
             raise RPAPurchaseError("우편번호 검색은 진행했지만 결과가 원래 화면에 채워지지 않았습니다 — 화면을 캡처해서 확인해야 합니다.")
 
-        # 상세주소(동/호수 등)를 별도로 구분해서 받지 않으므로, 원본 주소 전체를 상세주소
-        # 칸에도 한 번 더 넣어 정보 누락을 막는다 (중복되더라도 배송기사 입장에서는 무해함).
-        detail_count = await addr_inputs.count()
-        if detail_count >= 3:
-            detail_field = addr_inputs.nth(2)
-            await detail_field.click()
-            await detail_field.type(shipping_info.shipping_addr, delay=delay)
+        # 상세주소(동/호수 등)를 별도로 구분해서 받지 않으므로, "우편번호 찾기" 행 바로 다음
+        # 형제 행들 중 아직 비어있는 텍스트 입력칸에 원본 주소 전체를 한 번 더 넣어 정보
+        # 누락을 막는다 (중복되더라도 배송기사 입장에서는 무해함).
+        following_inputs = zip_button_row.locator("xpath=following-sibling::tr[position()<=2]//input[@type='text']")
+        following_count = await following_inputs.count()
+        for i in range(following_count):
+            candidate = following_inputs.nth(i)
+            if (await candidate.input_value()) == "":
+                await candidate.click(force=True)
+                await candidate.type(shipping_info.shipping_addr, delay=delay)
+                break
 
     async def _complete_payment(self, page, confirm_final_payment: bool = False) -> str:
         """PRD 5.2-4: 원클릭 간편결제/예치금/가상계좌 중 사전에 등록해둔 결제수단을 선택하고,
