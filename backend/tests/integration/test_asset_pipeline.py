@@ -29,5 +29,7 @@ async def test_generate_product_assets_end_to_end_with_mocks():
 
     assert result.thumbnail_url.endswith("products/CW2288-111/thumbnail.png")
     assert result.detail_page_url.endswith("products/CW2288-111/detail.webp")
-    assert result.thumbnail_url.startswith("https://")
-    assert result.detail_page_url.startswith("https://")
+    # Mock 스토리지는 app/static/generated/에 실제 파일로 저장하고, 대시보드가 바로
+    # 열 수 있는 상대경로(/generated/...)를 돌려준다 (가짜 https:// CDN 주소가 아니다).
+    assert result.thumbnail_url.startswith("/generated/")
+    assert result.detail_page_url.startswith("/generated/")

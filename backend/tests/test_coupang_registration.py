@@ -179,10 +179,28 @@ def test_register_product_for_master_product_creates_market_listing(sample_produ
     )
 
     assert listing.market_type == MarketType.COUPANG
-    assert listing.status == ListingStatus.ACTIVE
+    # request_approval을 안 줬으니(기본 False) 실제 판매중이 아니라 임시저장 상태여야 한다.
+    assert listing.status == ListingStatus.DRAFT
     assert listing.selling_price == Decimal("192834")
     assert listing.market_product_id is not None
     assert listing.registered_at is not None
+
+
+def test_register_product_for_master_product_marks_active_when_approval_requested(
+    sample_product_with_asset, db_session
+):
+    listing = register_product_for_master_product(
+        session=db_session,
+        product_id=sample_product_with_asset.product_id,
+        display_category_code=56137,
+        selling_price=Decimal("192834"),
+        size_stock=SAMPLE_SIZE_STOCK,
+        use_mock=True,
+        vendor_id="A00123456",
+        request_approval=True,
+    )
+
+    assert listing.status == ListingStatus.ACTIVE
 
 
 def test_register_product_for_master_product_upserts_on_second_call(sample_product_with_asset, db_session):
@@ -244,7 +262,7 @@ def test_register_product_for_master_product_auto_resolves_seller_info(sample_pr
         vendor_id="A00123456",
     )
 
-    assert listing.status == ListingStatus.ACTIVE
+    assert listing.status == ListingStatus.DRAFT
 
 
 def test_register_product_for_master_product_requires_generated_asset(db_session):

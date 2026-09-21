@@ -1,11 +1,16 @@
 import logging
 from functools import lru_cache
+from pathlib import Path
 
 import boto3
 from botocore.exceptions import ClientError
 
 from app.core.config import Settings, get_settings
 from app.integrations.storage.base import StorageClient
+
+# app/static/ 아래 — FastAPI가 StaticFiles로 "/"에서 서빙하는 디렉터리라,
+# 여기 저장된 파일은 브라우저에서 /generated/... 로 바로 열린다.
+_STATIC_GENERATED_DIR = Path(__file__).resolve().parent.parent.parent / "static" / "generated"
 
 logger = logging.getLogger(__name__)
 
@@ -53,30 +58,47 @@ class S3StorageClient(StorageClient):
 
 
 class MockS3StorageClient(StorageClient):
-    """실제 AWS 키 없이 로컬 개발/테스트가 가능한 인메모리 Mock 구현.
+    """실제 AWS 키 없이 로컬 개발/테스트가 가능한 Mock 구현.
 
-    업로드된 파일을 실제로 전송하지 않고 메모리 딕셔너리에 기록만 하며,
-    실 서비스와 동일한 형태의 가짜 CDN URL을 반환한다.
+    업로드된 파일은 메모리 딕셔너리에 항상 기록되고, `save_dir`가 주어지면 디스크에도
+    실제로 저장한다. `save_dir`가 없으면(단위테스트 기본값) 실 서비스와 동일한 형태의
+    가짜 CDN URL만 돌려주고 디스크에는 아무것도 쓰지 않는다 — `save_dir`가 있으면
+    브라우저에서 바로 열리는 로컬 경로(`/generated/...`)를 대신 돌려준다.
     """
 
-    def __init__(self, cloudfront_domain: str = "mock-cdn.example.com"):
+    def __init__(self, cloudfront_domain: str = "mock-cdn.example.com", save_dir: Path | None = None):
         self._cloudfront_domain = cloudfront_domain
+        self._save_dir = save_dir
         self.uploaded: dict[str, bytes] = {}
 
     def _to_public_url(self, key: str) -> str:
+        if self._save_dir is not None:
+            return f"/generated/{key}"
         return f"https://{self._cloudfront_domain}/{key}"
+
+    def _save_to_disk(self, key: str, data: bytes) -> None:
+        if self._save_dir is None:
+            return
+        path = self._save_dir / key
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(data)
 
     def upload_file(self, local_path: str, key: str, content_type: str = "image/webp") -> str:
         with open(local_path, "rb") as f:
-            self.uploaded[key] = f.read()
+            data = f.read()
+        self.uploaded[key] = data
+        self._save_to_disk(key, data)
         return self._to_public_url(key)
 
     def upload_bytes(self, data: bytes, key: str, content_type: str = "image/webp") -> str:
         self.uploaded[key] = data
+        self._save_to_disk(key, data)
         return self._to_public_url(key)
 
     def delete_file(self, key: str) -> None:
         self.uploaded.pop(key, None)
+        if self._save_dir is not None:
+            (self._save_dir / key).unlink(missing_ok=True)
 
 
 @lru_cache
@@ -84,5 +106,7 @@ def get_storage_client() -> StorageClient:
     """설정(`USE_MOCK_STORAGE`)에 따라 Mock 또는 실제 S3 클라이언트를 반환하는 팩토리."""
     settings = get_settings()
     if settings.use_mock_storage:
-        return MockS3StorageClient(settings.aws_cloudfront_domain or "mock-cdn.example.com")
+        return MockS3StorageClient(
+            settings.aws_cloudfront_domain or "mock-cdn.example.com", save_dir=_STATIC_GENERATED_DIR
+        )
     return S3StorageClient(settings)

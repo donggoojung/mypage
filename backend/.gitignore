@@ -6,3 +6,4 @@ __pycache__/
 *.egg-info/
 scripts/output/
 scripts/urls.txt
+app/static/generated/

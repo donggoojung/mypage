@@ -452,7 +452,10 @@ def register_product_for_master_product(
 
     listing.market_product_id = str(response["data"])
     listing.selling_price = selling_price
-    listing.status = ListingStatus.ACTIVE
+    # request_approval=False로 등록하면 쿠팡 쪽엔 임시저장 상태로만 들어가므로,
+    # 우리 DB 상태도 실제 판매중(ACTIVE)이 아니라 임시저장(DRAFT)으로 맞춰야 한다 —
+    # 아니면 아직 심사요청도 안 나간 상품을 대시보드에 "판매중"으로 잘못 보여주게 된다.
+    listing.status = ListingStatus.ACTIVE if request_approval else ListingStatus.DRAFT
     listing.registered_at = datetime.now(UTC)
     session.commit()
 
