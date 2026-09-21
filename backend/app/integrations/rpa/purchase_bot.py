@@ -122,11 +122,13 @@ class PlaywrightRPAClient(BaseRPAClient):
     async def _goto_product_and_select_size(self, page, style_code: str, size: str) -> None:
         """PRD 5.2-2: 품번 상세 URL로 이동해 사이즈를 선택하고 장바구니에 담는다.
 
-        실사이트 미검증 — abc_mart.py에서 검증된 상품상세 URL 규칙(`/product?prdtNo=N`)은
-        상품번호(prdtNo)로 여는 것이라 품번(style_code)으로 직접 열 수 없다. 대신 사이트
-        검색을 거쳐 상세페이지로 이동한다.
+        검색 URL(`/display/search-word/result?searchWord=`)은 2026-09-21 실사이트
+        devtools로 확인됨 — 상품상세 URL은 `/product?prdtNo=N`(랭킹 목록에서 검증됨)과
+        `/product/new?prdtNo=N`(검색 결과에서 클릭 시 확인됨) 두 가지가 섞여 있는데,
+        둘 다 SELECTOR_PRODUCT_LINK 링크를 그대로 따라가기만 하면 되므로 코드에서
+        URL 패턴을 직접 조립할 필요는 없다.
         """
-        search_url = f"https://abcmart.a-rt.com/display/search/result?keyword={style_code}"
+        search_url = f"https://abcmart.a-rt.com/display/search-word/result?searchWord={style_code}&channel=10001"
         await page.goto(search_url, wait_until="domcontentloaded", timeout=20000)
 
         from app.integrations.scrapers.abc_mart import SELECTOR_PRODUCT_LINK
