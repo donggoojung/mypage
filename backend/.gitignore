@@ -5,3 +5,4 @@ __pycache__/
 .pytest_cache/
 *.egg-info/
 scripts/output/
+scripts/urls.txt

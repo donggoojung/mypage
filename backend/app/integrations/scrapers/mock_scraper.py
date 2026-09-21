@@ -34,3 +34,12 @@ class MockScraper(BaseScraper):
             size_stock={"270": {"stock": 1, "is_sold_out": False}},
             raw_specs={"소재": "합성섬유"},
         )
+
+    async def fetch_product_by_url(self, product_url: str) -> ScrapedProduct:
+        """ABCMartScraper.fetch_product_by_url과 동일한 시그니처의 Mock 버전 —
+        재고 자동 새로고침 태스크를 Mock 모드에서도 테스트할 수 있게 해준다.
+        """
+        for product in _MOCK_CATALOG.values():
+            if product.source_url == product_url:
+                return product
+        return await self.fetch_product(style_code=product_url.rsplit("/", 1)[-1] or "UNKNOWN")

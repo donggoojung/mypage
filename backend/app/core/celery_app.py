@@ -23,3 +23,16 @@ celery_app.conf.update(
     enable_utc=True,
     task_track_started=True,
 )
+
+# 정기 실행 스케줄 (PRD 5.1 "웹훅 미지원 채널은 5분 주기 스케줄러") —
+# 실행하려면 워커와 별도로 `celery -A app.core.celery_app beat` 프로세스를 함께 띄워야 한다.
+celery_app.conf.beat_schedule = {
+    "detect-new-orders-every-5-minutes": {
+        "task": "order_tasks.detect_new_orders",
+        "schedule": 300.0,
+    },
+    "refresh-source-stock-every-30-minutes": {
+        "task": "crawl_tasks.refresh_all_source_mappings",
+        "schedule": 1800.0,
+    },
+}
