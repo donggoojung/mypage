@@ -3,7 +3,7 @@ from fastapi import APIRouter
 from pydantic import BaseModel
 
 from app.core.celery_app import celery_app
-from app.workers.tasks.pipeline_tasks import run_pipeline_for_url_task
+from app.workers.tasks.pipeline_tasks import refresh_all_registered_products_task, run_pipeline_for_url_task
 
 router = APIRouter(prefix="/api/pipeline", tags=["pipeline"])
 
@@ -29,6 +29,17 @@ def run_pipeline(payload: PipelineRunRequest) -> PipelineRunResponse:
     """대시보드의 "등록하기" 버튼 — 즉시 응답하고 실제 작업은 Celery 워커가 백그라운드로 처리한다."""
     options = payload.model_dump(exclude={"url"})
     task = run_pipeline_for_url_task.delay(payload.url, options)
+    return PipelineRunResponse(task_id=task.id)
+
+
+@router.post("/refresh-all", response_model=PipelineRunResponse)
+def refresh_all_pipeline() -> PipelineRunResponse:
+    """대시보드의 "전체 갱신" 버튼 — 이미 등록된 상품 전부를 저장된 URL로 다시 처리한다.
+
+    코드가 고쳐진 뒤 예전에 등록해둔 상품들에 예전 값이 남아있을 때, 사용자가 상품마다
+    URL을 일일이 다시 넣지 않고 한 번의 클릭으로 전부 최신화할 수 있게 해준다.
+    """
+    task = refresh_all_registered_products_task.delay()
     return PipelineRunResponse(task_id=task.id)
 
 

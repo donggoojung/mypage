@@ -136,3 +136,20 @@ async def test_run_pipeline_enqueues_celery_task(client, monkeypatch):
     response = await client.post("/api/pipeline/run", json={"url": "https://abcmart.a-rt.com/product?prdtNo=1"})
     assert response.status_code == 200
     assert response.json() == {"task_id": "fake-task-id-123"}
+
+
+@pytest.mark.asyncio
+async def test_refresh_all_pipeline_enqueues_celery_task(client, monkeypatch):
+    class _FakeAsyncResult:
+        id = "fake-refresh-task-id"
+
+    def _fake_delay():
+        return _FakeAsyncResult()
+
+    from app.api.routers import pipeline as pipeline_router
+
+    monkeypatch.setattr(pipeline_router.refresh_all_registered_products_task, "delay", _fake_delay)
+
+    response = await client.post("/api/pipeline/refresh-all")
+    assert response.status_code == 200
+    assert response.json() == {"task_id": "fake-refresh-task-id"}
