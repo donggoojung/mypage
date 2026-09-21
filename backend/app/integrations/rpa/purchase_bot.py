@@ -267,6 +267,7 @@ class PlaywrightRPAClient(BaseRPAClient):
             for label_pattern in candidates:
                 rows = page.locator("tr").filter(has_text=re.compile(label_pattern))
                 row_count = await rows.count()
+                print(f"  [진단] '{field_key}' 후보 라벨 '{label_pattern}' → 매칭된 행 {row_count}개")
                 # 2026-09-21 devtools로 확인됨: 배송수단(일반택배/편의점픽업 등)별로 같은 라벨의
                 # 행이 미리 여러 개 만들어져 있고 안 쓰는 건 style="display:none"으로 숨겨둔다
                 # (<tr name="normalDlvy">, <tr name="pickupCVS" style="display:none">). "마지막
@@ -274,9 +275,10 @@ class PlaywrightRPAClient(BaseRPAClient):
                 target = None
                 for i in range(row_count):
                     candidate_input = rows.nth(i).locator("input").first
-                    if await candidate_input.count() == 0:
-                        continue
-                    if await candidate_input.is_visible():
+                    input_count = await candidate_input.count()
+                    is_visible = await candidate_input.is_visible() if input_count > 0 else False
+                    print(f"    - 행 {i}: input {input_count}개, visible={is_visible}")
+                    if input_count > 0 and is_visible:
                         target = candidate_input
                         break
                 if target is None:
@@ -284,6 +286,10 @@ class PlaywrightRPAClient(BaseRPAClient):
                 await target.click()
                 await target.fill("")
                 await target.type(value, delay=delay)
+                actual_value = await target.input_value()
+                print(f"  [진단] '{field_key}' 입력 시도 후 실제 값: {actual_value!r} (기대값: {value!r})")
+                if actual_value != value:
+                    continue
                 filled = True
                 break
             if not filled:
