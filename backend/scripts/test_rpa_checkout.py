@@ -27,6 +27,11 @@ import asyncio
 import sys
 from pathlib import Path
 
+# Playwright가 브라우저 서브프로세스를 띄우는 동안 stdout이 줄단위로 즉시 안 비워지고
+# 뭉쳐서 나오는 경우가 있어(파워셀에서 print()한 진단 로그가 한참 뒤에야 보임), 강제로
+# 줄단위 출력으로 고정한다.
+sys.stdout.reconfigure(line_buffering=True)
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app.integrations.rpa.base import ShippingInfo  # noqa: E402

@@ -142,9 +142,10 @@ class PlaywrightRPAClient(BaseRPAClient):
                     await self._proceed_to_checkout(page)
                     await self._fill_shipping_fields(page, shipping_info)
                     return await self._complete_payment(page, confirm_final_payment)
-                except Exception:
+                except Exception as exc:
                     if self._pause_on_error:
-                        print(f"\n실패한 화면에서 멈췄습니다 — 지금 뜬 브라우저 창을 직접 보고 캡처하세요 (URL: {page.url}).")
+                        print(f"\n실패 원인: {exc}", flush=True)
+                        print(f"실패한 화면에서 멈췄습니다 — 지금 뜬 브라우저 창을 직접 보고 캡처하세요 (URL: {page.url}).", flush=True)
                         await asyncio.to_thread(input, "확인했으면 Enter를 눌러 창을 닫으세요 >>> ")
                     raise
             finally:
@@ -267,7 +268,7 @@ class PlaywrightRPAClient(BaseRPAClient):
             for label_pattern in candidates:
                 rows = page.locator("tr").filter(has_text=re.compile(label_pattern))
                 row_count = await rows.count()
-                print(f"  [진단] '{field_key}' 후보 라벨 '{label_pattern}' → 매칭된 행 {row_count}개")
+                print(f"  [진단] '{field_key}' 후보 라벨 '{label_pattern}' → 매칭된 행 {row_count}개", flush=True)
                 # 2026-09-21 devtools로 확인됨: 배송수단(일반택배/편의점픽업 등)별로 같은 라벨의
                 # 행이 미리 여러 개 만들어져 있고 안 쓰는 건 style="display:none"으로 숨겨둔다
                 # (<tr name="normalDlvy">, <tr name="pickupCVS" style="display:none">). "마지막
@@ -277,7 +278,7 @@ class PlaywrightRPAClient(BaseRPAClient):
                     candidate_input = rows.nth(i).locator("input").first
                     input_count = await candidate_input.count()
                     is_visible = await candidate_input.is_visible() if input_count > 0 else False
-                    print(f"    - 행 {i}: input {input_count}개, visible={is_visible}")
+                    print(f"    - 행 {i}: input {input_count}개, visible={is_visible}", flush=True)
                     if input_count > 0 and is_visible:
                         target = candidate_input
                         break
@@ -287,7 +288,7 @@ class PlaywrightRPAClient(BaseRPAClient):
                 await target.fill("")
                 await target.type(value, delay=delay)
                 actual_value = await target.input_value()
-                print(f"  [진단] '{field_key}' 입력 시도 후 실제 값: {actual_value!r} (기대값: {value!r})")
+                print(f"  [진단] '{field_key}' 입력 시도 후 실제 값: {actual_value!r} (기대값: {value!r})", flush=True)
                 if actual_value != value:
                     continue
                 filled = True
