@@ -35,9 +35,13 @@ TYPING_DELAY_MS_RANGE = (100, 150)
 # 상품상세 페이지 구조로 실제 검증됐고(2026-09-19), 사이즈를 "클릭"했을 때 장바구니/구매 흐름이
 # 어떻게 이어지는지는 아직 확인 전이다.
 SELECTOR_SIZE_OPTIONS = ".size-list .btn-prod-size, .size-option li, .option-size li"
-ADD_TO_CART_BUTTON_TEXTS = ["장바구니 담기", "장바구니", "바로구매", "바로 구매"]
-# "바로구매"는 장바구니 페이지에서 개별 상품 줄에 있는 버튼으로 2026-09-21 devtools로
-# 확인됨 — 전체선택 후 누르는 별도의 "주문하기" 버튼이 있는지는 아직 미확인이라 후보로 남겨둔다.
+# 우리는 "장바구니에 담아뒀다가 나중에 결제"할 일이 없다 — 고객 주문 1건당 상품 1개를 그
+# 자리에서 바로 사는 거라 "바로구매"를 최우선으로 시도한다. 2026-09-21 실사이트에서
+# "장바구니 담기"는 브라우저 네이티브 confirm() 팝업 + 장바구니 페이지 경유가 필요해
+# 더 깨지기 쉬운 경로였다("이동하시겠습니까" 팝업이 뜨자마자 사라지는 등) — "바로구매"는
+# 그 팝업/장바구니 페이지 없이 바로 주문서(/order) 화면으로 넘어가서 더 안정적이다.
+BUY_NOW_BUTTON_TEXTS = ["바로구매", "바로 구매"]
+ADD_TO_CART_BUTTON_TEXTS = ["장바구니 담기", "장바구니"]
 CHECKOUT_BUTTON_TEXTS = ["주문하기", "구매하기", "선택상품 주문", "바로구매"]
 PAYMENT_METHOD_SECTION_TEXTS = ["결제수단", "결제 수단"]
 FINAL_PAYMENT_BUTTON_TEXTS = ["결제하기", "최종결제", "결제 하기"]
@@ -164,29 +168,50 @@ class PlaywrightRPAClient(BaseRPAClient):
             raise RPAPurchaseError(f"사이즈 '{size}' 버튼을 찾지 못했습니다 (품절이거나 선택자가 바뀌었을 수 있음).")
         await size_button.first.click()
 
+        # "바로구매"를 최우선으로 시도한다 — 성공하면 장바구니를 거치지 않고 바로 주문서
+        # (/order) 화면으로 넘어간다. wait_for_url은 실제 브라우저 네비게이션뿐 아니라
+        # SPA 방식의 클라이언트 라우팅(주소만 바뀌는 경우)도 잡아내므로, 팝업 뒤에 이어지는
+        # 화면 전환이 정확히 "완전한 페이지 로드"가 아니어도 안전하게 기다릴 수 있다.
+        for label in BUY_NOW_BUTTON_TEXTS:
+            button = page.get_by_role("button", name=re.compile(re.escape(label))).or_(
+                page.get_by_text(label, exact=False)
+            )
+            if await button.count() > 0:
+                await button.first.click()
+                await page.wait_for_url(re.compile(r".*/order.*"), timeout=15000)
+                return
+
+        # 폴백: "바로구매"가 없으면 장바구니 담기 → confirm() 팝업 자동수락 → 장바구니
+        # 페이지(/cart/cart-list) 순서로 진행한다 (2026-09-21 devtools로 확인된 흐름).
         for label in ADD_TO_CART_BUTTON_TEXTS:
             button = page.get_by_role("button", name=re.compile(re.escape(label))).or_(
                 page.get_by_text(label, exact=False)
             )
             if await button.count() > 0:
-                # 클릭 → confirm() 팝업 자동수락 → 장바구니 페이지(/cart/cart-list)로
-                # 이동하는 흐름 전체가 끝날 때까지 기다린다. expect_navigation 없이 클릭만
-                # 하고 바로 리턴하면, 다음 단계(_proceed_to_checkout)가 아직 이동 중인
-                # 상품페이지에서 체크아웃 버튼을 찾다가 실패한다.
-                async with page.expect_navigation(wait_until="domcontentloaded", timeout=15000):
-                    await button.first.click()
+                await button.first.click()
+                await page.wait_for_url(re.compile(r".*/cart.*"), timeout=15000)
                 return
-        raise RPAPurchaseError(f"장바구니 담기 버튼을 찾지 못했습니다 (시도한 문구: {ADD_TO_CART_BUTTON_TEXTS}).")
+        raise RPAPurchaseError(
+            f"바로구매/장바구니 담기 버튼을 찾지 못했습니다 "
+            f"(시도한 문구: {BUY_NOW_BUTTON_TEXTS + ADD_TO_CART_BUTTON_TEXTS})."
+        )
 
     async def _proceed_to_checkout(self, page) -> None:
-        """장바구니에서 체크아웃 페이지로 이동한다. 실사이트 미검증."""
+        """장바구니에서 체크아웃(주문서 작성) 페이지로 이동한다.
+
+        "바로구매" 경로를 탔다면 이미 /order 페이지에 도착해 있으므로 할 일이 없다 —
+        _goto_product_and_select_size가 장바구니 폴백 경로를 탔을 때만 실제로 버튼을 찾는다.
+        """
+        if "/order" in page.url:
+            return
+
         for label in CHECKOUT_BUTTON_TEXTS:
             button = page.get_by_role("button", name=re.compile(re.escape(label))).or_(
                 page.get_by_text(label, exact=False)
             )
             if await button.count() > 0:
-                async with page.expect_navigation(wait_until="domcontentloaded", timeout=15000):
-                    await button.first.click()
+                await button.first.click()
+                await page.wait_for_url(re.compile(r".*/order.*"), timeout=15000)
                 return
         raise RPAPurchaseError(f"체크아웃(주문하기) 버튼을 찾지 못했습니다 (시도한 문구: {CHECKOUT_BUTTON_TEXTS}).")
 
