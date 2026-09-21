@@ -82,3 +82,21 @@ net start winnat
 이러면 Windows가 포트 예약 목록을 초기화해요. 그 다음 워커/서버 창을 다시 켜보시면 대부분 해결됩니다.
 
 그래도 안 되면, `netsh interface ipv4 show excludedportrange protocol=tcp`로 막힌 구간을 확인해서 안 걸리는 포트로 바꿔야 하는데, 이건 캡처 보내주시면 제가 코드에서 고쳐드릴게요.
+
+## RPA(ABC마트 자동구매) 테스트하는 방법
+
+아직 실사이트 셀렉터가 검증 전이라, 반드시 눈으로 보면서(headless 창 없이) 테스트해야 해요. 절대 돈이 안 나가는 순서로 만들어뒀습니다.
+
+**1) 로그인 세션 저장 (한 번만, 세션 만료되면 다시)**
+```powershell
+cd C:\Users\SSNPC\projects\mypage\backend
+.venv\Scripts\Activate.ps1
+python scripts/save_abc_mart_session.py
+```
+브라우저 창이 뜨면 평소 쓰는 ABC마트 계정으로 로그인 → 파워셀로 돌아와서 Enter.
+
+**2) 흐름 테스트 (결제 직전까지만, 안전)**
+```powershell
+python scripts/test_rpa_checkout.py <품번> <사이즈> --name 홍길동 --phone 01012345678 --addr "서울시 강남구 테헤란로 1"
+```
+브라우저 창이 뜨고 사이즈 선택→장바구니→배송지입력까지 자동으로 진행됩니다. 어느 단계에서 멈추거나 에러가 나면, **그 화면을 캡처**해서 보내주세요 — 선택자를 고쳐드릴게요. `--confirm-final-payment`를 붙이지 않는 한 실제 결제 버튼은 절대 누르지 않습니다.

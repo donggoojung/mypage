@@ -2,8 +2,10 @@
 
 from sqlalchemy.orm import Session
 
+from app.core.config import get_settings
 from app.integrations.rpa.base import ShippingInfo
 from app.integrations.rpa.factory import get_rpa_client
+from app.integrations.rpa.purchase_bot import REVIEW_ONLY_PREFIX
 from app.models.customer_order import CustomerOrder
 from app.models.enums import OrderStatus
 from app.models.master_product import MasterProduct
@@ -39,7 +41,20 @@ async def process_new_order(session: Session, order_id: int, use_mock: bool | No
             recipient_phone=order.recipient_phone,
             shipping_addr=order.shipping_addr,
         )
-        source_order_id = await rpa_client.purchase_order(quote.style_code, order.ordered_size, shipping_info)
+        # RPA_CONFIRM_FINAL_PAYMENT=false(기본값)면 실제 결제 직전 단계까지만 진행하고 멈춘다
+        # (scripts/test_rpa_checkout.py로 충분히 검증하기 전까지는 반드시 이 기본값을 유지할 것).
+        confirm_final_payment = get_settings().rpa_confirm_final_payment
+        source_order_id = await rpa_client.purchase_order(
+            quote.style_code, order.ordered_size, shipping_info, confirm_final_payment=confirm_final_payment
+        )
+        if source_order_id.startswith(REVIEW_ONLY_PREFIX):
+            # 안전장치가 켜진 상태(RPA_CONFIRM_FINAL_PAYMENT=false)라 최종 결제 직전에 멈춘
+            # 것이지 실제로 산 게 아니다 — ORDER_PURCHASED로 넘기면 안 되고, 사람이 먼저
+            # scripts/test_rpa_checkout.py로 흐름을 검증한 뒤 설정을 켜야 한다.
+            raise OrderProcessingError(
+                f"RPA가 최종 결제 직전 단계까지만 진행했습니다({source_order_id}) — "
+                ".env의 RPA_CONFIRM_FINAL_PAYMENT=true로 바꾸기 전에는 실제 구매가 완료되지 않습니다."
+            )
     except Exception:
         order.status = OrderStatus.RECEIVED  # 실패 시 다음 폴링에서 재시도할 수 있게 원상 복구.
         session.commit()

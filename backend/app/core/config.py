@@ -38,6 +38,13 @@ class Settings(BaseSettings):
     esm_master_id: str = ""
     esm_api_key: str = ""
 
+    # --- RPA(무인발주) 관련 ---
+    # scripts/save_abc_mart_session.py로 저장해둔 ABC마트 로그인 쿠키 파일 경로.
+    abc_mart_session_file: str = "scripts/output/abc_mart_session.json"
+    # False(기본값, 안전) = 체크아웃 최종 확인 단계까지만 진행하고 실제 결제 버튼은 누르지 않는다.
+    # 실제 자동구매를 완료하려면 이 값을 명시적으로 true로 바꿔야 한다 (쿠팡 request_approval과 같은 안전장치).
+    rpa_confirm_final_payment: bool = False
+
     # AWS S3 / CloudFront
     aws_access_key_id: str = ""
     aws_secret_access_key: str = ""
