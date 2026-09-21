@@ -15,6 +15,7 @@ import httpx
 from app.core.database import SessionLocalSync
 from app.integrations.markets.coupang import (
     CoupangRegistrationError,
+    predict_display_category_code,
     register_product_for_master_product,
 )
 from app.integrations.scrapers.abc_mart import ABCMartScraper
@@ -31,7 +32,9 @@ class PipelineOptions:
     headless: bool = True
     # 정가(크롤링된 표시가) 대비 단순 마크업 비율 — 판매가 = 원가 × (1 + target_margin_rate).
     target_margin_rate: Decimal = Decimal("0.30")
-    display_category_code: int = 56137
+    # None(기본값)이면 쿠팡 카테고리 자동추천 API로 상품명에 맞는 코드를 자동으로 찾는다.
+    # 값을 직접 넣으면(사용자가 고급 옵션에 입력) 자동추천 없이 그 값을 그대로 쓴다.
+    display_category_code: int | None = None
     category: str = "운동화"
     color_tone: str = "neutral"
     request_approval: bool = False
@@ -148,11 +151,15 @@ async def run_pipeline_for_url(url: str, options: PipelineOptions | None = None)
 
     # --- [5/5] 쿠팡 등록 준비/실행 ---
     print("[5/5] 쿠팡 상품 등록 준비 중...")
+    display_category_code = options.display_category_code
+    if display_category_code is None:
+        display_category_code = await predict_display_category_code(f"{brand_name} {product_name}")
+        print(f"  전시카테고리 자동추천: {display_category_code} (상품명 기반, 수동 지정 안 함)")
     try:
         listing = await asyncio.to_thread(
             _register_coupang_sync,
             product_id,
-            options.display_category_code,
+            display_category_code,
             selling_price,
             scraped.size_stock or {},
             options.request_approval,

@@ -124,8 +124,8 @@
         <label>마크업 비율 (정가 대비)
           <input id="opt-margin-rate" type="number" step="0.01" value="0.30">
         </label>
-        <label>쿠팡 전시카테고리 코드
-          <input id="opt-category-code" type="number" value="56137">
+        <label>쿠팡 전시카테고리 코드 (비워두면 자동 추천)
+          <input id="opt-category-code" type="number" placeholder="자동 추천">
         </label>
         <label>실제 판매 심사요청
           <select id="opt-request-approval">
@@ -209,7 +209,7 @@ async function runPipeline() {
   const payload = {
     url,
     target_margin_rate: parseFloat(document.getElementById("opt-margin-rate").value) || 0.30,
-    display_category_code: parseInt(document.getElementById("opt-category-code").value) || 56137,
+    display_category_code: parseInt(document.getElementById("opt-category-code").value) || null,
     request_approval: document.getElementById("opt-request-approval").value === "true",
   };
 

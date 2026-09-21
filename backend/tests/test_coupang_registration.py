@@ -14,6 +14,7 @@ from app.integrations.markets.coupang import (
     CoupangWingClient,
     _generate_hmac_signature,
     build_seller_product_payload,
+    predict_display_category_code,
     register_product_for_master_product,
     resolve_seller_info,
 )
@@ -263,6 +264,26 @@ def test_register_product_for_master_product_auto_resolves_seller_info(sample_pr
     )
 
     assert listing.status == ListingStatus.DRAFT
+
+
+# --- 6. 카테고리 자동추천 검증 -------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_predict_category_mock_returns_positive_category_id():
+    client = CoupangWingClient(use_mock=True)
+    result = await client.predict_category("나이키 에어포스 1 '07 화이트")
+
+    assert result["predictedCategoryId"] > 0
+    assert result["predictedCategoryName"]
+
+
+@pytest.mark.asyncio
+async def test_predict_display_category_code_returns_int():
+    code = await predict_display_category_code("나이키 에어포스 1 '07 화이트", use_mock=True)
+
+    assert isinstance(code, int)
+    assert code > 0
 
 
 def test_register_product_for_master_product_requires_generated_asset(db_session):

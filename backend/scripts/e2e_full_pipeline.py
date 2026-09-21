@@ -59,8 +59,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--display-category-code",
         type=int,
-        default=56137,
-        help="쿠팡 전시카테고리 코드 (기본값은 예시 코드 — 실제 카테고리에 맞게 지정 필요)",
+        default=None,
+        help="쿠팡 전시카테고리 코드 (생략하면 쿠팡 카테고리 자동추천 API가 상품명으로 자동으로 찾는다)",
     )
     parser.add_argument("--category", default="운동화", help="AI 배경 합성 프롬프트용 카테고리")
     parser.add_argument("--color-tone", default="neutral", help="AI 배경 합성 컬러톤")

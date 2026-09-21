@@ -38,6 +38,7 @@ PRODUCT_REGISTRATION_PATH = "/v2/providers/seller_api/apis/api/v1/marketplace/se
 SHIPPING_PLACE_LIST_PATH = "/v2/providers/openapi/apis/api/v4/vendors/{vendor_id}/shipping-place/list"
 RETURN_SHIPPING_CENTER_LIST_PATH = "/v2/providers/openapi/apis/api/v4/vendors/{vendor_id}/returnShippingCenters"
 ORDER_SHEETS_PATH = "/v2/providers/openapi/apis/api/v4/vendors/{vendor_id}/ordersheets"
+CATEGORY_PREDICTION_PATH = "/v2/providers/openapi/apis/api/v1/categorization/predict"
 
 # --- TODO: 실API 검증이 필요한 상품정보제공고시(신발 카테고리) 기본 항목 ---
 DEFAULT_NOTICE_CATEGORY = "신발"
@@ -350,6 +351,41 @@ class CoupangWingClient:
             response.raise_for_status()
             return response.json().get("data", [])
 
+    async def predict_category(self, product_name: str) -> dict:
+        """상품명으로 쿠팡 전시카테고리를 자동 추천받는다 (PRD 4장 등록 준비).
+
+        WING 판매자센터에서 사용자가 직접 카테고리를 찾아 코드를 입력하지 않아도 되게
+        하려는 목적 — 대신 상품명(브랜드+제품명)을 넣으면 쿠팡이 어울리는 전시카테고리
+        코드를 추천해준다. 실API 미검증 — 파일 상단 설명 참고.
+        """
+        if self._use_mock:
+            return self._mock_predict_category(product_name)
+        return await self._real_predict_category(product_name)
+
+    @staticmethod
+    def _mock_predict_category(product_name: str) -> dict:
+        return {
+            "predictedCategoryId": 56137,
+            "predictedCategoryName": "(Mock) 스니커즈/운동화",
+            "autoCategorizationServiceApplicable": True,
+        }
+
+    async def _real_predict_category(self, product_name: str) -> dict:
+        headers = _build_authorization_header(
+            method="POST",
+            path=CATEGORY_PREDICTION_PATH,
+            access_key=self._settings.coupang_access_key,
+            secret_key=self._settings.coupang_secret_key,
+        )
+        payload = {"productName": product_name}
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(
+                f"{COUPANG_API_HOST}{CATEGORY_PREDICTION_PATH}", headers=headers, json=payload
+            )
+            response.raise_for_status()
+            body = response.json()
+            return body.get("data", body)
+
 
 async def resolve_seller_info(settings: Settings | None = None, use_mock: bool | None = None, vendor_id: str | None = None) -> dict:
     """출고지/반품지를 쿠팡 API로 직접 조회해, 사용자가 수동 입력하지 않아도 되는
@@ -384,6 +420,24 @@ async def resolve_seller_info(settings: Settings | None = None, use_mock: bool |
         "return_address": place_address.get("returnAddress1", ""),
         "return_address_detail": place_address.get("returnAddress2", ""),
     }
+
+
+async def predict_display_category_code(
+    product_name: str, settings: Settings | None = None, use_mock: bool | None = None
+) -> int:
+    """상품명으로 쿠팡 전시카테고리 코드를 자동 추천받는다.
+
+    사용자가 WING에서 수동으로 카테고리를 찾아 넣지 않아도 되도록,
+    `product_pipeline.py`가 등록 직전에 이 함수를 호출해 `display_category_code`를
+    자동으로 채운다 (사용자가 고급 옵션에서 직접 값을 지정하면 그 값이 우선한다).
+    """
+    settings = settings or get_settings()
+    client = CoupangWingClient(settings=settings, use_mock=use_mock)
+    result = await client.predict_category(product_name)
+    category_id = result.get("predictedCategoryId")
+    if not category_id:
+        raise CoupangRegistrationError(f"카테고리 자동 추천 실패 (상품명={product_name!r}): {result}")
+    return int(category_id)
 
 
 def register_product_for_master_product(

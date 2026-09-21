@@ -11,10 +11,12 @@ from app.services.product_pipeline import PipelineOptions, PipelineResult, run_p
 
 def _options_from_dict(options: dict | None) -> PipelineOptions:
     options = options or {}
+    raw_category_code = options.get("display_category_code")
     return PipelineOptions(
         headless=True,  # 서버에서 도는 백그라운드 작업이라 항상 창 없이 실행.
         target_margin_rate=Decimal(str(options.get("target_margin_rate", "0.30"))),
-        display_category_code=int(options.get("display_category_code", 56137)),
+        # None이면 쿠팡 카테고리 자동추천 API가 상품명으로 알아서 채운다 (product_pipeline.py 참고).
+        display_category_code=int(raw_category_code) if raw_category_code else None,
         category=options.get("category", "운동화"),
         color_tone=options.get("color_tone", "neutral"),
         request_approval=bool(options.get("request_approval", False)),

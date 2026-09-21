@@ -17,7 +17,8 @@ class PipelineRunRequest(BaseModel):
     url: str
     request_approval: bool = False
     target_margin_rate: float = 0.30  # 정가 대비 마크업 비율 (판매가 = 원가 × (1+이 값))
-    display_category_code: int = 56137
+    # None(기본값)이면 쿠팡 카테고리 자동추천 API로 상품명에 맞는 코드를 자동으로 찾는다.
+    display_category_code: int | None = None
     category: str = "운동화"
     color_tone: str = "neutral"
 
@@ -49,7 +50,7 @@ class PipelineRunBatchRequest(BaseModel):
     urls: list[str]
     request_approval: bool = False
     target_margin_rate: float = 0.30
-    display_category_code: int = 56137
+    display_category_code: int | None = None
     category: str = "운동화"
     color_tone: str = "neutral"
 
