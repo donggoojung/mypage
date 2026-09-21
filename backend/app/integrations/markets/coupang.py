@@ -54,11 +54,16 @@ class CoupangRegistrationError(RuntimeError):
 def _generate_hmac_signature(method: str, path: str, secret_key: str, query: str = "") -> tuple[str, str]:
     """쿠팡 WING 오픈API 표준 HMAC-SHA256 서명을 생성한다.
 
+    2026-09-21 실계정 테스트로 확인됨: 서명용 메시지에는 쿼리스트링을 그대로 이어붙이되
+    맨 앞의 "?"는 빼야 한다(실제 요청 URL에는 "?"를 붙인다) — 이 함수를 호출하는 쪽에서는
+    URL용으로 "?"가 붙은 query를 그대로 넘겨도 되도록, 여기서 lstrip으로 제거한다.
+    "?"를 포함한 채로 서명하면 쿠팡 서버가 401 Unauthorized로 거부한다.
+
     Returns: (signed_date, signature_hex)
     """
     now = datetime.now(UTC)
     signed_date = now.strftime("%y%m%d") + "T" + now.strftime("%H%M%S") + "Z"
-    message = signed_date + method.upper() + path + query
+    message = signed_date + method.upper() + path + query.lstrip("?")
     signature = hmac.new(secret_key.encode("utf-8"), message.encode("utf-8"), hashlib.sha256).hexdigest()
     return signed_date, signature
 
