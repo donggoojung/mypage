@@ -39,9 +39,12 @@ SELECTOR_PRICE = ".prod-price .price, .sale-price"
 # 실사이트 구조: <ul class="size-list"><li>...<button class="btn-prod-size">260</button></li></ul>
 SELECTOR_SIZE_OPTIONS = ".size-list .btn-prod-size, .size-option li, .option-size li"
 
-# 주의 — 실사이트 미검증(카테고리/목록 페이지는 아직 devtools로 확인 못함).
-# 상품 목록에서 결과가 0개로 나오면 이 셀렉터를 F12로 실제 값 확인 후 조정해야 한다.
-SELECTOR_PRODUCT_LINK = "a[href*='/product/']"
+# 2026-09-21 실사이트(abcmart.a-rt.com 랭킹 목록페이지) devtools로 확인된 셀렉터:
+# <li class="... prod-item ..." data-product-no="..."><div class="prod-item-inner">
+#   ...<a href="/product?prdtNo=1010122611" class="prod-link" id="prod-link-...">...
+# 다른 목록 페이지(브랜드/카테고리 등)도 같은 구조인지는 아직 확인 전이라, 결과가
+# 0개로 나오면 이 셀렉터를 F12로 다시 확인해야 한다.
+SELECTOR_PRODUCT_LINK = "a.prod-link"
 CATEGORY_PAGE_QUERY_PARAM = "page"
 
 
@@ -93,9 +96,10 @@ class ABCMartScraper(BaseScraper):
     ) -> list[str]:
         """카테고리/섹션 목록 페이지를 순회하며 상품 상세 URL을 모은다 (배치 등록용).
 
-        주의 — 실사이트 미검증: SELECTOR_PRODUCT_LINK와 `?page=N` 페이지네이션 방식은
-        상세 페이지 셀렉터처럼 devtools로 확인된 값이 아니다. 결과가 0개면 실제 목록
-        페이지를 F12로 열어 SELECTOR_PRODUCT_LINK를 조정해야 한다.
+        SELECTOR_PRODUCT_LINK(`a.prod-link`)는 랭킹 목록 페이지로 실사이트 검증됨
+        (2026-09-21). 다만 `?page=N` 페이지네이션 방식은 아직 미검증이다 — 이 사이트는
+        `rowsPerPage` 같은 파라미터로 개수를 지정하는 방식일 수 있으니, 여러 페이지가
+        안 모이면 `max_pages=1`로 두고 호출한 URL 자체의 개수 파라미터를 늘려서 쓴다.
 
         전체 사이트를 한 번에 긁는 기능은 의도적으로 지원하지 않는다 — `max_products`로
         섹션 1개당 가져올 상품 수를 제한해, 사람이 결과를 한번 검토하고 등록할 수 있게 한다.
@@ -119,7 +123,10 @@ class ABCMartScraper(BaseScraper):
                     await page.goto(page_url, wait_until="domcontentloaded", timeout=20000)
 
                     try:
-                        await page.wait_for_selector(SELECTOR_PRODUCT_LINK, timeout=10000)
+                        # 상품 링크가 이미지 위에 깔리는 투명 오버레이(width/height는 CSS로
+                        # 채워짐)라 기본 state="visible" 대기는 타이밍에 따라 실패할 수 있다.
+                        # "DOM에 존재하는지"만 확인하면 충분하다.
+                        await page.wait_for_selector(SELECTOR_PRODUCT_LINK, state="attached", timeout=10000)
                     except Exception:
                         break  # 상품이 없거나(마지막 페이지) 목록 페이지 구조가 예상과 다름
 
