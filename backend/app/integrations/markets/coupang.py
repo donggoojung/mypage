@@ -545,7 +545,13 @@ def select_notice_category(metadata: dict) -> tuple[str, list[str]]:
         raise CoupangRegistrationError(f"카테고리 메타정보에 noticeCategories가 없습니다: {metadata}")
 
     chosen = next((c for c in categories if "신발" in c.get("noticeCategoryName", "")), categories[0])
-    detail_names = [d.get("name", "") for d in chosen.get("noticeCategoryDetailNames") or [] if d.get("name")]
+    # 2026-09-22 실API 검증됨: 실제 응답은 항목 이름이 "name"이 아니라 "noticeCategoryDetailName"
+    # 키에 들어있다 (Mock 데이터는 "name"을 쓰므로 기존 테스트 호환을 위해 둘 다 지원한다).
+    detail_names = [
+        d.get("noticeCategoryDetailName") or d.get("name") or ""
+        for d in chosen.get("noticeCategoryDetailNames") or []
+    ]
+    detail_names = [name for name in detail_names if name]
     if not detail_names:
         raise CoupangRegistrationError(f"선택된 고시카테고리에 항목이 없습니다: {chosen}")
     return chosen.get("noticeCategoryName", ""), detail_names
