@@ -16,7 +16,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from app.integrations.markets.coupang import predict_display_category_code, resolve_notice_info  # noqa: E402
+from app.core.config import get_settings  # noqa: E402
+from app.integrations.markets.coupang import CoupangWingClient, predict_display_category_code, select_notice_category  # noqa: E402
 
 # 신발이라는 걸 절대 헷갈릴 수 없는, 아주 명확한 상품명들로 시도한다.
 CANDIDATE_PRODUCT_NAMES = [
@@ -30,6 +31,7 @@ CANDIDATE_PRODUCT_NAMES = [
 
 
 async def main() -> None:
+    client = CoupangWingClient(settings=get_settings())
     for name in CANDIDATE_PRODUCT_NAMES:
         print(f"\n=== 상품명: {name!r} ===")
         try:
@@ -39,7 +41,11 @@ async def main() -> None:
             continue
         print(f"  자동추천 카테고리 코드: {code}")
         try:
-            notice_category_name, detail_keys = await resolve_notice_info(code)
+            # resolve_notice_info()는 원본 JSON을 전부 화면에 찍는 진단용 함수라
+            # 여기선 쓰지 않고, 같은 일을 하는 내부 함수 2개를 직접 조합해서
+            # 결과 요약만 깔끔하게 출력한다.
+            metadata = await client.fetch_category_metadata(code)
+            notice_category_name, detail_keys = select_notice_category(metadata)
         except Exception as exc:  # noqa: BLE001
             print(f"  고시정보 조회 실패: {exc}")
             continue
