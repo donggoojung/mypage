@@ -16,7 +16,9 @@ from app.integrations.markets.coupang import (
     build_seller_product_payload,
     predict_display_category_code,
     register_product_for_master_product,
+    resolve_notice_info,
     resolve_seller_info,
+    select_notice_category,
 )
 from app.models.enums import GenerationStatus, ListingStatus, MarketType
 from app.models.generated_asset import GeneratedAsset
@@ -285,6 +287,45 @@ async def test_predict_display_category_code_returns_int():
 
     assert isinstance(code, int)
     assert code > 0
+
+
+# --- 7. 카테고리별 상품정보제공고시 항목 조회 검증 -------------------------------
+
+
+def test_select_notice_category_prefers_shoe_category():
+    metadata = {
+        "noticeCategories": [
+            {"noticeCategoryName": "기타재화", "noticeCategoryDetailNames": [{"name": "품명 및 모델명"}]},
+            {"noticeCategoryName": "신발", "noticeCategoryDetailNames": [{"name": "소재"}, {"name": "색상"}]},
+        ]
+    }
+
+    name, keys = select_notice_category(metadata)
+
+    assert name == "신발"
+    assert keys == ["소재", "색상"]
+
+
+def test_select_notice_category_falls_back_to_first_when_no_shoe_match():
+    metadata = {"noticeCategories": [{"noticeCategoryName": "기타재화", "noticeCategoryDetailNames": [{"name": "품명 및 모델명"}]}]}
+
+    name, keys = select_notice_category(metadata)
+
+    assert name == "기타재화"
+    assert keys == ["품명 및 모델명"]
+
+
+def test_select_notice_category_raises_when_no_categories():
+    with pytest.raises(CoupangRegistrationError):
+        select_notice_category({"noticeCategories": []})
+
+
+@pytest.mark.asyncio
+async def test_resolve_notice_info_mock_returns_shoe_category():
+    name, keys = await resolve_notice_info(52021, use_mock=True)
+
+    assert "신발" in name
+    assert "소재" in keys
 
 
 def test_register_product_for_master_product_requires_generated_asset(db_session):

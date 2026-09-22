@@ -43,8 +43,13 @@ SHIPPING_PLACE_LIST_PATH = "/v2/providers/marketplace_openapi/apis/api/v1/vendor
 RETURN_SHIPPING_CENTER_LIST_PATH = "/v2/providers/openapi/apis/api/v5/vendors/{vendor_id}/returnShippingCenters"
 ORDER_SHEETS_PATH = "/v2/providers/openapi/apis/api/v4/vendors/{vendor_id}/ordersheets"
 CATEGORY_PREDICTION_PATH = "/v2/providers/openapi/apis/api/v1/categorization/predict"
+# 2026-09-22 웹검색으로 실제 문서/오픈소스 구현체 확인됨: 카테고리별로 요구하는
+# 상품정보제공고시(신발/의류/기타재화 등) 항목이 다르다 — displayCategoryCode로 이
+# API를 호출해 그 카테고리가 실제로 요구하는 항목 목록을 받아와야 한다.
+CATEGORY_METADATA_PATH = "/v2/providers/seller_api/apis/api/v1/marketplace/meta/category-related-metas/display-category-codes/{display_category_code}"
 
-# --- TODO: 실API 검증이 필요한 상품정보제공고시(신발 카테고리) 기본 항목 ---
+# 카테고리 메타정보 조회가 실패했을 때(권한 문제 등)만 쓰는 폴백 — 실API 미검증인 예시값이라
+# 부정확할 수 있다. 정상 흐름에서는 항상 위 API가 돌려주는 실제 값을 우선 사용한다.
 DEFAULT_NOTICE_CATEGORY = "신발"
 DEFAULT_NOTICE_DETAIL_KEYS = ("소재", "색상", "치수", "제조자(수입자)", "제조국", "세탁방법 및 취급시 주의사항")
 
@@ -101,6 +106,11 @@ class CoupangProductInput:
     # False(기본값, 안전) = 임시저장만 하고 실제 판매 심사요청은 보내지 않는다.
     # True로 바꿔야만 쿠팡에 승인요청이 실제로 들어간다 — 실계정 첫 테스트는 반드시 False로.
     request_approval: bool = False
+    # 카테고리별로 요구하는 상품정보제공고시 항목이 달라, 정상 흐름에서는
+    # resolve_notice_info()가 카테고리 메타정보 API로 조회한 실제 값을 채운다.
+    # 조회 실패 시에만 아래 기본값(신발 카테고리 예시, 실API 미검증)을 그대로 쓴다.
+    notice_category_name: str = DEFAULT_NOTICE_CATEGORY
+    notice_detail_keys: tuple[str, ...] = DEFAULT_NOTICE_DETAIL_KEYS
 
 
 def build_seller_product_payload(data: CoupangProductInput, seller_info: dict) -> dict:
@@ -115,8 +125,8 @@ def build_seller_product_payload(data: CoupangProductInput, seller_info: dict) -
 
     original_price = data.original_price if data.original_price is not None else data.selling_price
     notices = [
-        {"noticeCategoryName": DEFAULT_NOTICE_CATEGORY, "noticeCategoryDetailName": key, "content": data.specs.get(key, "상품 상세 참조")}
-        for key in DEFAULT_NOTICE_DETAIL_KEYS
+        {"noticeCategoryName": data.notice_category_name, "noticeCategoryDetailName": key, "content": data.specs.get(key, "상품 상세 참조")}
+        for key in data.notice_detail_keys
     ]
     attributes_base = [{"attributeTypeName": key, "attributeValueName": value} for key, value in data.specs.items()]
 
@@ -405,6 +415,49 @@ class CoupangWingClient:
             body = response.json()
             return body.get("data", body)
 
+    async def fetch_category_metadata(self, display_category_code: int) -> dict:
+        """전시카테고리가 실제로 요구하는 상품정보제공고시/옵션 등의 메타정보를 조회한다.
+
+        2026-09-22 웹검색으로 확인됨: 카테고리마다 요구하는 고시정보 항목(신발/의류/기타재화
+        등)이 다르고, 신발 카테고리라고 항상 "소재/색상/치수/제조자.../제조국/세탁방법..."을
+        요구하는 게 아니다 — 이 API로 실제 그 카테고리가 요구하는 항목을 받아와야 한다.
+        """
+        if self._use_mock:
+            return self._mock_category_metadata()
+        return await self._real_fetch_category_metadata(display_category_code)
+
+    @staticmethod
+    def _mock_category_metadata() -> dict:
+        return {
+            "noticeCategories": [
+                {
+                    "noticeCategoryName": "(Mock) 신발",
+                    "noticeCategoryDetailNames": [
+                        {"name": "소재", "required": "MANDATORY"},
+                        {"name": "색상", "required": "MANDATORY"},
+                        {"name": "치수", "required": "MANDATORY"},
+                        {"name": "제조자(수입자)", "required": "MANDATORY"},
+                        {"name": "제조국", "required": "MANDATORY"},
+                        {"name": "세탁방법 및 취급시 주의사항", "required": "MANDATORY"},
+                    ],
+                }
+            ]
+        }
+
+    async def _real_fetch_category_metadata(self, display_category_code: int) -> dict:
+        path = CATEGORY_METADATA_PATH.format(display_category_code=display_category_code)
+        headers = _build_authorization_header(
+            method="GET",
+            path=path,
+            access_key=self._settings.coupang_access_key,
+            secret_key=self._settings.coupang_secret_key,
+        )
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.get(f"{COUPANG_API_HOST}{path}", headers=headers)
+            response.raise_for_status()
+            body = response.json()
+            return body.get("data", body)
+
 
 async def resolve_seller_info(settings: Settings | None = None, use_mock: bool | None = None, vendor_id: str | None = None) -> dict:
     """출고지/반품지를 쿠팡 API로 직접 조회해, 사용자가 수동 입력하지 않아도 되는
@@ -479,6 +532,39 @@ async def predict_display_category_code(
     return int(category_id)
 
 
+def select_notice_category(metadata: dict) -> tuple[str, list[str]]:
+    """카테고리 메타정보 응답에서 쓸 상품정보제공고시 카테고리 1개를 고른다.
+
+    "신발"이 후보에 있으면 그걸 우선하고, 없으면 첫 번째 후보를 쓴다 — 한 카테고리
+    안에서 항목을 섞어 쓰면 안 되므로(예: "신발" 항목 일부 + "기타재화" 항목 일부),
+    반드시 후보 중 하나를 통째로 선택해야 한다.
+    """
+    categories = metadata.get("noticeCategories") or []
+    if not categories:
+        raise CoupangRegistrationError(f"카테고리 메타정보에 noticeCategories가 없습니다: {metadata}")
+
+    chosen = next((c for c in categories if "신발" in c.get("noticeCategoryName", "")), categories[0])
+    detail_names = [d.get("name", "") for d in chosen.get("noticeCategoryDetailNames") or [] if d.get("name")]
+    if not detail_names:
+        raise CoupangRegistrationError(f"선택된 고시카테고리에 항목이 없습니다: {chosen}")
+    return chosen.get("noticeCategoryName", ""), detail_names
+
+
+async def resolve_notice_info(
+    display_category_code: int, settings: Settings | None = None, use_mock: bool | None = None
+) -> tuple[str, list[str]]:
+    """전시카테고리 코드로 그 카테고리가 실제로 요구하는 상품정보제공고시 항목을 조회한다.
+
+    실패하면(권한 문제 등) 폴백으로 예시값(DEFAULT_NOTICE_CATEGORY/KEYS)을 쓴다 —
+    카테고리 자동추천과 같은 이유로, 이 부가 기능 하나 때문에 등록 전체가 막히면 안 된다.
+    호출부(product_pipeline.py)에서 이 폴백 여부를 로그로 남긴다.
+    """
+    settings = settings or get_settings()
+    client = CoupangWingClient(settings=settings, use_mock=use_mock)
+    metadata = await client.fetch_category_metadata(display_category_code)
+    return select_notice_category(metadata)
+
+
 def register_product_for_master_product(
     session: Session,
     product_id: int,
@@ -517,6 +603,16 @@ def register_product_for_master_product(
     if seller_info is None:
         seller_info = asyncio.run(resolve_seller_info(settings=settings, use_mock=use_mock, vendor_id=vendor_id))
 
+    try:
+        notice_category_name, notice_detail_keys = asyncio.run(
+            resolve_notice_info(display_category_code, settings=settings, use_mock=use_mock)
+        )
+    except (CoupangRegistrationError, httpx.HTTPError) as exc:
+        # 부가 기능(정확한 고시항목 자동조회) 하나 때문에 등록 전체가 막히면 안 된다 —
+        # 실패하면 예시값(실API 미검증)으로 폴백하고 넘어간다.
+        notice_category_name, notice_detail_keys = DEFAULT_NOTICE_CATEGORY, list(DEFAULT_NOTICE_DETAIL_KEYS)
+        print(f"  카테고리 고시정보 자동조회 실패({exc}) — 기본값({notice_category_name})으로 등록합니다.")
+
     payload_input = CoupangProductInput(
         style_code=product.style_code,
         brand_name=product.brand_name,
@@ -530,6 +626,8 @@ def register_product_for_master_product(
         size_stock=size_stock,
         specs=product.raw_specs_json or {},
         request_approval=request_approval,
+        notice_category_name=notice_category_name,
+        notice_detail_keys=tuple(notice_detail_keys),
     )
     payload = build_seller_product_payload(payload_input, seller_info)
 
