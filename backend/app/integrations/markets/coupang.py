@@ -37,10 +37,10 @@ PRODUCT_REGISTRATION_PATH = "/v2/providers/seller_api/apis/api/v1/marketplace/se
 # marketplace_openapi이고, vendorId를 경로에 안 넣는다(API 키로 자동 식별됨) — 처음에
 # 추측했던 경로(v4/vendors/{id}/shipping-place/list)는 404였다.
 SHIPPING_PLACE_LIST_PATH = "/v2/providers/marketplace_openapi/apis/api/v1/vendor/shipping-place/outbound"
-# 2026-09-21 실계정 테스트로 확인됨: v4 경로는 200 OK를 반환하지만 WING 화면에는
-# 분명히 "사용중" 상태로 있는 반품지가 빈 배열([])로 나왔다 — v4가 오래된/캐시된
-# 버전일 가능성이 있어 v5로 변경해본다 (v5가 "공식 경로"라는 자료도 있었음).
-RETURN_SHIPPING_CENTER_LIST_PATH = "/v2/providers/openapi/apis/api/v5/vendors/{vendor_id}/returnShippingCenters"
+# 2026-09-22 웹검색으로 재확인됨: v5는 "조회(GET)"가 아니라 "반품지 생성(POST)" 경로였다
+# (v4→v5 변경은 잘못된 방향이었음 — 그래서 빈 배열만 돌아왔다). 공식 문서와 실제
+# 동작하는 오픈소스 구현체(kyungdongseo/coupang) 둘 다 조회는 v4를 쓴다.
+RETURN_SHIPPING_CENTER_LIST_PATH = "/v2/providers/openapi/apis/api/v4/vendors/{vendor_id}/returnShippingCenters"
 ORDER_SHEETS_PATH = "/v2/providers/openapi/apis/api/v4/vendors/{vendor_id}/ordersheets"
 CATEGORY_PREDICTION_PATH = "/v2/providers/openapi/apis/api/v1/categorization/predict"
 # 2026-09-22 웹검색으로 실제 문서/오픈소스 구현체 확인됨: 카테고리별로 요구하는
