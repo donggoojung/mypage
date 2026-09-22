@@ -116,6 +116,24 @@ def test_build_seller_product_payload_requests_approval_only_when_explicitly_tru
     assert payload["requested"] is True
 
 
+def test_build_seller_product_payload_omits_brand_id_when_not_found():
+    """brand_id가 None(기본값)이면 브랜드명 텍스트만 보내고 brandId 필드는 아예 안 넣어야 한다."""
+    payload = build_seller_product_payload(_sample_input(), SAMPLE_SELLER_INFO)
+
+    assert payload["brand"] == "나이키"
+    assert "brandId" not in payload
+
+
+def test_build_seller_product_payload_includes_brand_id_when_found():
+    """search_brand_id()로 정확한 brandId를 찾았으면 payload에 같이 실어야 한다."""
+    data = _sample_input()
+    data.brand_id = "12345"
+    payload = build_seller_product_payload(data, SAMPLE_SELLER_INFO)
+
+    assert payload["brand"] == "나이키"
+    assert payload["brandId"] == "12345"
+
+
 def test_build_seller_product_payload_uses_seo_title_when_provided():
     """Gemini가 만든 SEO 상품명이 있으면, 브랜드+상품명+품번을 이어붙이는 대신 그대로 써야 한다."""
     data = _sample_input()
@@ -300,6 +318,18 @@ async def test_predict_display_category_code_returns_int():
 
     assert isinstance(code, int)
     assert code > 0
+
+
+# --- 6-1. 브랜드ID 검색 검증 ----------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_search_brand_id_mock_returns_non_empty_id():
+    client = CoupangWingClient(use_mock=True)
+    brand_id = await client.search_brand_id("나이키")
+
+    assert brand_id
+    assert "나이키" in brand_id
 
 
 # --- 7. 카테고리별 상품정보제공고시 항목 조회 검증 -------------------------------

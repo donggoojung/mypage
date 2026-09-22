@@ -44,6 +44,11 @@ SHIPPING_PLACE_LIST_PATH = "/v2/providers/marketplace_openapi/apis/api/v1/vendor
 RETURN_SHIPPING_CENTER_LIST_PATH = "/v2/providers/openapi/apis/api/v4/vendors/{vendor_id}/returnShippingCenters"
 ORDER_SHEETS_PATH = "/v2/providers/openapi/apis/api/v4/vendors/{vendor_id}/ordersheets"
 CATEGORY_PREDICTION_PATH = "/v2/providers/openapi/apis/api/v1/categorization/predict"
+# 2026-09-22 웹검색으로 확인됨(실API 미검증 — 정확한 요청/응답 필드명은 실API로 재확인 필요):
+# 브랜드명 텍스트를 그대로 보내면(등록된 브랜드와 완전히 일치하지 않는 경우) "브랜드 ID가
+# 필요합니다"로 등록이 거부된다 — WING 판매자센터의 "브랜드 검색" 화면과 같은 기능으로
+# 정확한 brandId를 찾아 등록 페이로드에 같이 넣어야 한다.
+BRAND_SEARCH_PATH = "/v2/providers/seller_api/apis/api/v1/marketplace/brands/search"
 # 2026-09-22 웹검색으로 실제 문서/오픈소스 구현체 확인됨: 카테고리별로 요구하는
 # 상품정보제공고시(신발/의류/기타재화 등) 항목이 다르다 — displayCategoryCode로 이
 # API를 호출해 그 카테고리가 실제로 요구하는 항목 목록을 받아와야 한다.
@@ -123,6 +128,10 @@ class CoupangProductInput:
     specs: dict[str, str] = field(default_factory=dict)  # {"소재": "...", "제조국": "...", ...}
     original_price: Decimal | None = None  # None이면 selling_price와 동일하게 처리(할인 없음)
     manufacturer: str = ""
+    # search_brand_id()로 찾은, 쿠팡에 정식 등록된 브랜드ID. None이면 브랜드명 텍스트만
+    # 보낸다(기존 동작) — 일부 브랜드는 이게 없으면 "브랜드 ID가 필요합니다"로 등록이
+    # 거부된다(2026-09-22 실사용 중 발견).
+    brand_id: str | None = None
     # False(기본값, 안전) = 임시저장만 하고 실제 판매 심사요청은 보내지 않는다.
     # True로 바꿔야만 쿠팡에 승인요청이 실제로 들어간다 — 실계정 첫 테스트는 반드시 False로.
     request_approval: bool = False
@@ -223,6 +232,7 @@ def build_seller_product_payload(data: CoupangProductInput, seller_info: dict) -
         "saleEndedAt": now.replace(year=now.year + 2).strftime("%Y-%m-%dT%H:%M:%S"),
         "displayProductName": data.seo_title or f"{data.brand_name} {data.product_name}",
         "brand": data.brand_name,
+        **({"brandId": data.brand_id} if data.brand_id else {}),
         "generalProductName": data.product_name,
         # 2026-09-21 실API 검증됨: "SEQUENCE"가 아니라 "SEQUENCIAL"(오타처럼 보이지만
         # 쿠팡 API가 실제로 기대하는 철자)이어야 한다.
@@ -455,6 +465,54 @@ class CoupangWingClient:
             response.raise_for_status()
             body = response.json()
             return body.get("data", body)
+
+    async def search_brand_id(self, brand_name: str) -> str | None:
+        """브랜드명으로 쿠팡에 등록된 공식 브랜드ID를 찾는다 (WING "브랜드 검색" 화면과 동일한 기능).
+
+        스크래핑한 브랜드명 텍스트가 쿠팡에 등록된 브랜드명과 완전히 일치하지 않으면
+        상품 등록이 "브랜드 ID가 필요합니다"로 거부되는 경우가 있다(2026-09-22 실사용
+        중 발견) — 이 API로 정확한 brandId를 찾아 등록 페이로드에 같이 넣어주면 통과된다.
+        검색 결과 중 브랜드명이 정확히 일치하는 항목이 있을 때만 그 ID를 쓴다(엉뚱한
+        브랜드가 잘못 붙는 걸 막기 위해) — 못 찾으면 None을 돌려주고, 호출부는 기존처럼
+        브랜드명 텍스트만 보내는 방식으로 계속 진행한다.
+        실API 미검증 — 정확한 요청/응답 필드명은 실API로 재확인이 필요하다.
+        """
+        if self._use_mock:
+            return self._mock_search_brand_id(brand_name)
+        return await self._real_search_brand_id(brand_name)
+
+    @staticmethod
+    def _mock_search_brand_id(brand_name: str) -> str:
+        return f"MOCK-BRAND-{brand_name}"
+
+    async def _real_search_brand_id(self, brand_name: str) -> str | None:
+        headers = _build_authorization_header(
+            method="POST",
+            path=BRAND_SEARCH_PATH,
+            access_key=self._settings.coupang_access_key,
+            secret_key=self._settings.coupang_secret_key,
+        )
+        payload = {"brandName": brand_name}
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(f"{COUPANG_API_HOST}{BRAND_SEARCH_PATH}", headers=headers, json=payload)
+            response.raise_for_status()
+            body = response.json()
+        print(f"  [진단] 브랜드 검색 원본 응답({brand_name!r}): {body}", flush=True)
+
+        candidates = body.get("data") if isinstance(body, dict) else body
+        if isinstance(candidates, dict):
+            candidates = candidates.get("content") or candidates.get("brands") or [candidates]
+        if not isinstance(candidates, list):
+            return None
+
+        for item in candidates:
+            if not isinstance(item, dict):
+                continue
+            name = item.get("brandName") or item.get("name") or item.get("brand")
+            brand_id = item.get("brandId") or item.get("id")
+            if name == brand_name and brand_id is not None:
+                return str(brand_id)
+        return None
 
     async def fetch_category_metadata(self, display_category_code: int) -> dict:
         """전시카테고리가 실제로 요구하는 상품정보제공고시/옵션 등의 메타정보를 조회한다.
@@ -784,6 +842,8 @@ def register_product_for_master_product(
         notice_category_name, notice_detail_keys = DEFAULT_NOTICE_CATEGORY, list(DEFAULT_NOTICE_DETAIL_KEYS)
         print(f"  카테고리 고시정보 자동조회 실패({exc}) — 기본값({notice_category_name})으로 등록합니다.")
 
+    client = CoupangWingClient(settings=settings, use_mock=use_mock)
+
     try:
         seo_title = asyncio.run(
             GeminiClient(settings=settings).generate_seo_title(
@@ -797,6 +857,13 @@ def register_product_for_master_product(
     except Exception as exc:  # noqa: BLE001 - 부가 기능(SEO 정제)이 등록 전체를 막으면 안 된다.
         seo_title = None
         print(f"  Gemini SEO 상품명 생성 실패({exc}) — 기존 방식(브랜드+상품명+품번)으로 등록합니다.")
+
+    try:
+        brand_id = asyncio.run(client.search_brand_id(product.brand_name))
+        print(f"  [진단] 브랜드 검색: {product.brand_name!r} → brandId={brand_id!r}", flush=True)
+    except Exception as exc:  # noqa: BLE001 - 부가 기능(브랜드ID 조회)이 등록 전체를 막으면 안 된다.
+        brand_id = None
+        print(f"  브랜드ID 조회 실패({exc}) — 브랜드명 텍스트만으로 등록을 시도합니다.")
 
     payload_input = CoupangProductInput(
         style_code=product.style_code,
@@ -814,10 +881,10 @@ def register_product_for_master_product(
         notice_category_name=notice_category_name,
         notice_detail_keys=tuple(notice_detail_keys),
         seo_title=seo_title,
+        brand_id=brand_id,
     )
     payload = build_seller_product_payload(payload_input, seller_info)
 
-    client = CoupangWingClient(settings=settings, use_mock=use_mock)
     response = asyncio.run(client.register_product(payload))
 
     if response.get("code") != "SUCCESS":
