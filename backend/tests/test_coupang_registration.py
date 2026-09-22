@@ -135,6 +135,21 @@ def test_build_seller_product_payload_includes_brand_id_when_found():
     assert payload["brandId"] == "12345"
 
 
+def test_build_seller_product_payload_uses_brand_field_override():
+    """brandId와 함께 보내는 "brand" 텍스트는 공식 브랜드명과 정확히 일치해야 하므로,
+    brand_field_override가 있으면 brand_name 대신 그 값을 써야 한다."""
+    data = _sample_input()
+    data.brand_name = "에비수 셀렉트"
+    data.brand_id = "KR-00005"
+    data.brand_field_override = "에비수"
+    payload = build_seller_product_payload(data, SAMPLE_SELLER_INFO)
+
+    assert payload["brand"] == "에비수"
+    assert payload["brandId"] == "KR-00005"
+    # 브랜드+모델명 정보는 노출상품명 쪽엔 원본 그대로 유지되어야 한다(정보 손실 방지).
+    assert "에비수 셀렉트" in payload["displayProductName"]
+
+
 def test_build_seller_product_payload_uses_seo_title_when_provided():
     """Gemini가 만든 SEO 상품명이 있으면, 브랜드+상품명+품번을 이어붙이는 대신 그대로 써야 한다."""
     data = _sample_input()
@@ -325,12 +340,15 @@ async def test_predict_display_category_code_returns_int():
 
 
 @pytest.mark.asyncio
-async def test_search_brand_id_mock_returns_non_empty_id():
+async def test_search_brand_id_mock_returns_id_and_name():
     client = CoupangWingClient(use_mock=True)
-    brand_id = await client.search_brand_id("나이키")
+    result = await client.search_brand_id("나이키")
 
+    assert result is not None
+    brand_id, brand_name = result
     assert brand_id
     assert "나이키" in brand_id
+    assert brand_name == "나이키"
 
 
 # 2026-09-22 실API 응답으로 확인된 실제 구조를 그대로 본떠 만든 샘플 — 브랜드 검색 API가
@@ -352,16 +370,16 @@ SAMPLE_BRAND_SEARCH_RESPONSE = {
 
 
 def test_select_brand_id_matches_exact_name():
-    brand_id = select_brand_id(SAMPLE_BRAND_SEARCH_RESPONSE, "에비수")
+    result = select_brand_id(SAMPLE_BRAND_SEARCH_RESPONSE, "에비수")
 
-    assert brand_id == "KR-00005"
+    assert result == ("KR-00005", "에비수")
 
 
 def test_select_brand_id_matches_prefix_when_source_appends_extra_text():
     """ABC마트가 "에비수 셀렉트"처럼 브랜드명 뒤에 자체 라인명을 붙여도, 앞부분이 일치하면 찾아야 한다."""
-    brand_id = select_brand_id(SAMPLE_BRAND_SEARCH_RESPONSE, "에비수 셀렉트")
+    result = select_brand_id(SAMPLE_BRAND_SEARCH_RESPONSE, "에비수 셀렉트")
 
-    assert brand_id == "KR-00005"
+    assert result == ("KR-00005", "에비수")
 
 
 def test_select_brand_id_returns_none_when_nothing_matches():
