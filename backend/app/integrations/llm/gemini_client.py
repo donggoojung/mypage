@@ -73,14 +73,26 @@ class GeminiClient:
             response = await self._sdk_client.aio.models.generate_content(
                 model=self._settings.gemini_model,
                 contents=prompt,
-                config=types.GenerateContentConfig(temperature=0.2, max_output_tokens=100),
+                # 2026-09-22 실API 검증됨: max_output_tokens를 너무 작게(100) 주면 최신
+                # "thinking" 모델이 내부 추론에 토큰을 다 써버려 실제 출력 텍스트가 빈
+                # 값으로 온다(IndexError로 이어짐) — 여유 있게 잡고 thinking은 꺼둔다.
+                config=types.GenerateContentConfig(
+                    temperature=0.2,
+                    max_output_tokens=512,
+                    thinking_config=types.ThinkingConfig(thinking_budget=0),
+                ),
             )
         except Exception as exc:  # noqa: BLE001 - SDK 예외 유형이 다양해 공통 래핑한다.
             raise GeminiClientError(f"Gemini SEO 상품명 생성 실패: {exc}") from exc
 
-        title = (response.text or "").strip().strip('"').splitlines()[0].strip()
+        raw_text = (response.text or "").strip()
+        if not raw_text:
+            raise GeminiClientError(
+                f"Gemini가 빈 텍스트를 반환했습니다 (finish_reason 등 원인은 raw 응답 참고): {response}"
+            )
+        title = raw_text.strip('"').splitlines()[0].strip()
         if not title:
-            raise GeminiClientError(f"Gemini가 빈 응답을 반환했습니다: {response}")
+            raise GeminiClientError(f"Gemini 응답에서 제목을 추출하지 못했습니다: {raw_text!r}")
         return title[:MAX_SEO_TITLE_LENGTH]
 
     # --- 2) 상세 스펙 요약 -------------------------------------------------
@@ -105,11 +117,18 @@ class GeminiClient:
             response = await self._sdk_client.aio.models.generate_content(
                 model=self._settings.gemini_model,
                 contents=prompt,
-                config=types.GenerateContentConfig(temperature=0.1, response_mime_type="application/json"),
+                config=types.GenerateContentConfig(
+                    temperature=0.1,
+                    max_output_tokens=1024,
+                    response_mime_type="application/json",
+                    thinking_config=types.ThinkingConfig(thinking_budget=0),
+                ),
             )
         except Exception as exc:  # noqa: BLE001
             raise GeminiClientError(f"Gemini 스펙 요약 실패: {exc}") from exc
 
+        if not response.text:
+            raise GeminiClientError(f"Gemini가 빈 텍스트를 반환했습니다: {response}")
         try:
             parsed = json.loads(response.text)
         except (TypeError, json.JSONDecodeError) as exc:

@@ -145,15 +145,25 @@ def test_client_real_mode_requires_google_genai_or_raises_clear_error():
 # --- 4. 실제 API 키가 .env에 있을 때만 실행되는 실계정 검증 -------------------
 
 
+def _real_gemini_api_key() -> str:
+    """.env(get_settings())와 실제 셸 환경변수 양쪽을 다 확인한다 —
+    pydantic-settings는 .env 값을 os.environ에 반영하지 않으므로 os.environ만 보면
+    .env에만 키를 넣어둔 경우를 놓친다.
+    """
+    from app.core.config import get_settings
+
+    return os.environ.get("GEMINI_API_KEY") or get_settings().gemini_api_key
+
+
 def _real_settings_or_none() -> Settings | None:
-    api_key = os.environ.get("GEMINI_API_KEY", "")
+    api_key = _real_gemini_api_key()
     if not api_key:
         return None
     return Settings(gemini_api_key=api_key, use_mock_llm=False, database_url_sync="sqlite:///:memory:")
 
 
 @pytest.mark.asyncio
-@pytest.mark.skipif(not os.environ.get("GEMINI_API_KEY"), reason="GEMINI_API_KEY가 .env에 없어 실API 테스트를 건너뜁니다.")
+@pytest.mark.skipif(not _real_gemini_api_key(), reason="GEMINI_API_KEY가 .env에 없어 실API 테스트를 건너뜁니다.")
 async def test_generate_seo_title_real_api_returns_nonempty_title():
     client = GeminiClient(settings=_real_settings_or_none())
 
@@ -167,7 +177,7 @@ async def test_generate_seo_title_real_api_returns_nonempty_title():
 
 
 @pytest.mark.asyncio
-@pytest.mark.skipif(not os.environ.get("GEMINI_API_KEY"), reason="GEMINI_API_KEY가 .env에 없어 실API 테스트를 건너뜁니다.")
+@pytest.mark.skipif(not _real_gemini_api_key(), reason="GEMINI_API_KEY가 .env에 없어 실API 테스트를 건너뜁니다.")
 async def test_summarize_product_specs_real_api_returns_dict():
     client = GeminiClient(settings=_real_settings_or_none())
 
