@@ -89,6 +89,9 @@ class CoupangProductInput:
     display_category_code: int
     selling_price: Decimal
     vendor_id: str
+    # WING 로그인 아이디(이메일/로그인ID) — 코드가 추측할 수 없어 설정(COUPANG_VENDOR_USER_ID)에서
+    # 받아온다. 2026-09-21 실API 검증됨: 이 값이 없으면 "vendorUserId 값을 확인해 주세요"로 거부된다.
+    vendor_user_id: str
     thumbnail_image_url: str
     detail_image_url: str
     size_stock: dict[str, dict]  # {"250": {"stock": 5, "is_sold_out": False}, ...}
@@ -128,7 +131,8 @@ def build_seller_product_payload(data: CoupangProductInput, seller_info: dict) -
                 "salePrice": int(data.selling_price),
                 "maximumBuyCount": 999,
                 "maximumBuyForPerson": 0,
-                "maximumBuyForPersonPeriod": 0,
+                # 2026-09-21 실API 검증됨: 0을 넣으면 "최소 1 이상이어야 한다"고 거부된다.
+                "maximumBuyForPersonPeriod": 1,
                 "outboundShippingTimeDay": 2,
                 "unitCount": 1,
                 "adultOnly": "EVERYONE",
@@ -169,7 +173,10 @@ def build_seller_product_payload(data: CoupangProductInput, seller_info: dict) -
         "displayProductName": f"{data.brand_name} {data.product_name}",
         "brand": data.brand_name,
         "generalProductName": data.product_name,
-        "deliveryMethod": "SEQUENCE",
+        # 2026-09-21 실API 검증됨: "SEQUENCE"가 아니라 "SEQUENCIAL"(오타처럼 보이지만
+        # 쿠팡 API가 실제로 기대하는 철자)이어야 한다.
+        "deliveryMethod": "SEQUENCIAL",
+        "vendorUserId": data.vendor_user_id,
         "deliveryCompanyCode": seller_info.get("delivery_company_code", "CJGLS"),
         "deliveryChargeType": "FREE",
         "deliveryCharge": 0,
@@ -517,6 +524,7 @@ def register_product_for_master_product(
         display_category_code=display_category_code,
         selling_price=selling_price,
         vendor_id=vendor_id,
+        vendor_user_id=settings.coupang_vendor_user_id,
         thumbnail_image_url=asset.ai_thumbnail_url,
         detail_image_url=asset.ai_detail_image_url,
         size_stock=size_stock,

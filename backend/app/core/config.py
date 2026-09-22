@@ -35,6 +35,8 @@ class Settings(BaseSettings):
     coupang_access_key: str = ""
     coupang_secret_key: str = ""
     coupang_vendor_id: str = ""
+    # WING 로그인 아이디(이메일/로그인ID) — 상품 등록 API의 필수 필드(vendorUserId).
+    coupang_vendor_user_id: str = ""
     # 반품지 조회 API(returnShippingCenters)가 WING 화면엔 있는 반품지를 빈 배열로
     # 돌려주는 문제(캐시 지연으로 추정)가 있을 때, 이 값을 채워두면 API 조회를 건너뛰고
     # 바로 이 반품지를 쓴다. WING > 판매자정보 > 주소록/배송정보관리에서 반품지 "수정"

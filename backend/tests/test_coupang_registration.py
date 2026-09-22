@@ -48,6 +48,7 @@ def _sample_input() -> CoupangProductInput:
         display_category_code=56137,  # 쿠팡 "운동화" 전시카테고리 예시 코드
         selling_price=Decimal("192834"),
         vendor_id="A00123456",
+        vendor_user_id="test_vendor_user",
         thumbnail_image_url="https://mock-cdn.example.com/products/CW2288-111/thumbnail.png",
         detail_image_url="https://mock-cdn.example.com/products/CW2288-111/detail.webp",
         size_stock=SAMPLE_SIZE_STOCK,
