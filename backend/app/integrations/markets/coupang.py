@@ -53,6 +53,12 @@ CATEGORY_METADATA_PATH = "/v2/providers/seller_api/apis/api/v1/marketplace/meta/
 # 반품지 조회 API가 빈 배열만 주는 계정에서 NO_RETURN_CENTERCODE 폴백 시 쓰는 기본
 # 반품담당자명 — .env의 COUPANG_RETURN_CHARGE_NAME을 채우면 그 값이 우선한다.
 DEFAULT_RETURN_CHARGE_NAME = "보탬"
+# 2026-09-22 실API 검증됨: ABCMartScraper가 아직 raw_specs(색상 등)를 추출하지 못해
+# 항상 {}를 내려준다(TODO: 실제 페이지 구조 분석 후 스크래퍼에서 추출하도록 개선 필요).
+# 그 사이 "색상"이 필수(MANDATORY) 구매옵션인 카테고리는 이 값이 없으면 등록 자체가
+# 거부되므로, 등록이 막히지 않도록 임시 기본값을 채운다 — 실제 판매 전에는 반드시
+# 정확한 색상으로 수정해야 한다(지금은 request_approval=False라 비공개 임시저장만 됨).
+DEFAULT_COLOR = "화이트계열"
 DEFAULT_NOTICE_CATEGORY = "신발"
 DEFAULT_NOTICE_DETAIL_KEYS = ("소재", "색상", "치수", "제조자(수입자)", "제조국", "세탁방법 및 취급시 주의사항")
 
@@ -132,7 +138,11 @@ def build_seller_product_payload(data: CoupangProductInput, seller_info: dict) -
         for key in data.notice_detail_keys
     ]
     print(f"  [진단] 제출할 notices: {notices}", flush=True)
-    attributes_base = [{"attributeTypeName": key, "attributeValueName": value} for key, value in data.specs.items()]
+    specs_with_defaults = dict(data.specs)
+    if "색상" not in specs_with_defaults:
+        print(f"  [진단] specs에 '색상' 없음 → 임시 기본값('{DEFAULT_COLOR}')으로 등록 (실제 판매 전 반드시 수정 필요)", flush=True)
+        specs_with_defaults["색상"] = DEFAULT_COLOR
+    attributes_base = [{"attributeTypeName": key, "attributeValueName": value} for key, value in specs_with_defaults.items()]
 
     items = []
     for size, stock_info in data.size_stock.items():
