@@ -17,6 +17,7 @@ from app.integrations.markets.coupang import (
     CoupangRegistrationError,
     predict_display_category_code,
     register_product_for_master_product,
+    resolve_notice_info,
 )
 from app.integrations.scrapers.abc_mart import ABCMartScraper
 from app.models.enums import GenerationStatus, MarketType, SourcePlatform
@@ -192,6 +193,24 @@ async def run_pipeline_for_url(url: str, options: PipelineOptions | None = None)
             display_category_code = DEFAULT_DISPLAY_CATEGORY_CODE
             print(f"  전시카테고리 자동추천 실패({exc}) — 기본값 {display_category_code}로 등록합니다.")
             print("  정확한 카테고리가 필요하면 고급 옵션에서 직접 코드를 지정해주세요.")
+        else:
+            # 2026-09-22 실사용 중 발견: 자동추천이 상품명만 보고 신발과 무관한 카테고리
+            # (예: "소형전자")를 잘못 고르는 경우가 있다. 이 파이프라인은 ABC마트(신발
+            # 전문) 상품만 다루는데, 잘못된 카테고리로 등록하면 그 카테고리엔 "신발사이즈"
+            # 속성이 없어서 쿠팡이 사이즈별 옵션을 구분하지 못해 "중복된 옵션값이
+            # 있습니다"로 등록 자체를 거부한다. 추천된 카테고리의 고시정보 항목에 "신발"이
+            # 전혀 없으면 잘못된 예측으로 보고 검증된 기본 신발 카테고리로 되돌린다.
+            try:
+                notice_category_name, _ = await resolve_notice_info(display_category_code)
+            except (CoupangRegistrationError, httpx.HTTPError):
+                notice_category_name = ""  # 검증 자체가 실패해도 등록은 계속 진행한다.
+            if "신발" not in notice_category_name and display_category_code != DEFAULT_DISPLAY_CATEGORY_CODE:
+                print(
+                    f"  전시카테고리 자동추천값({display_category_code})이 신발과 무관해 보여 "
+                    f"(고시카테고리={notice_category_name!r}) 기본 신발 카테고리 "
+                    f"{DEFAULT_DISPLAY_CATEGORY_CODE}로 대체합니다."
+                )
+                display_category_code = DEFAULT_DISPLAY_CATEGORY_CODE
     try:
         listing = await asyncio.to_thread(
             _register_coupang_sync,
