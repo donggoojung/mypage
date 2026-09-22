@@ -50,6 +50,9 @@ CATEGORY_METADATA_PATH = "/v2/providers/seller_api/apis/api/v1/marketplace/meta/
 
 # 카테고리 메타정보 조회가 실패했을 때(권한 문제 등)만 쓰는 폴백 — 실API 미검증인 예시값이라
 # 부정확할 수 있다. 정상 흐름에서는 항상 위 API가 돌려주는 실제 값을 우선 사용한다.
+# 반품지 조회 API가 빈 배열만 주는 계정에서 NO_RETURN_CENTERCODE 폴백 시 쓰는 기본
+# 반품담당자명 — .env의 COUPANG_RETURN_CHARGE_NAME을 채우면 그 값이 우선한다.
+DEFAULT_RETURN_CHARGE_NAME = "보탬"
 DEFAULT_NOTICE_CATEGORY = "신발"
 DEFAULT_NOTICE_DETAIL_KEYS = ("소재", "색상", "치수", "제조자(수입자)", "제조국", "세탁방법 및 취급시 주의사항")
 
@@ -497,10 +500,23 @@ async def resolve_seller_info(settings: Settings | None = None, use_mock: bool |
     print(f"  [진단] 반품지 응답 원본: {return_centers}", flush=True)
     return_center = next((r for r in return_centers if r.get("usable")), None)
     if return_center is None:
-        raise CoupangRegistrationError(
-            "사용 가능한(usable) 반품지가 쿠팡 계정에 없습니다. WING 판매자센터에서 반품지를 먼저 등록해주세요 "
-            "(또는 .env의 COUPANG_RETURN_CENTER_CODE 등을 채워서 수동으로 지정하세요)."
-        )
+        # 2026-09-22 실계정 확인됨: WING 화면엔 반품지가 "사용중"으로 있어도 조회 API가
+        # 계속 빈 배열만 주는 계정이 있다(원인 미상). 쿠팡 공식 FAQ에 따르면 이 경우
+        # returnCenterCode에 "NO_RETURN_CENTERCODE"를 넣고 반품 주소를 직접 입력하면
+        # 등록이 가능하다 — 대신 10만원 이하 반품은 회수 없이 환불 처리된다.
+        # 주소는 이미 조회에 성공한 출고지(outbound) 정보를 그대로 재사용한다.
+        print("  [진단] 반품지 조회 결과 없음 → NO_RETURN_CENTERCODE 폴백(출고지 주소 재사용)", flush=True)
+        outbound_place_address = (outbound.get("placeAddresses") or [{}])[0]
+        return {
+            "delivery_company_code": "CJGLS",
+            "outbound_shipping_place_code": str(outbound.get("outboundShippingPlaceCode", "")),
+            "return_center_code": "NO_RETURN_CENTERCODE",
+            "return_charge_name": settings.coupang_return_charge_name or DEFAULT_RETURN_CHARGE_NAME,
+            "company_contact_number": outbound_place_address.get("companyContactNumber", ""),
+            "return_zip_code": outbound_place_address.get("returnZipCode", ""),
+            "return_address": outbound_place_address.get("returnAddress", ""),
+            "return_address_detail": outbound_place_address.get("returnAddressDetail", ""),
+        }
     place_address = (return_center.get("placeAddresses") or [{}])[0]
 
     return {
