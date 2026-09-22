@@ -126,6 +126,10 @@ COUPANG_MARGIN_RATE_ABOVE_TOP_TIER = Decimal("0.15")
 COUPANG_OUTBOUND_SHIPPING_COST = Decimal("4000")
 # %마진 계산 결과가 이보다 적게 남으면, 이 금액이 남도록 가격을 올린다.
 COUPANG_MINIMUM_FIXED_MARGIN = Decimal("10000")
+# 최종 판매가를 이 단위로 올림 처리한다 — 1,000원 미만 자리는 전부 "0"으로 끊어서
+# 62,080원 같은 어중간한 가격 대신 63,000원처럼 깔끔한 가격으로 등록한다.
+# (쿠팡 API는 10원 단위 미만 입력을 아예 거부하는데, 1,000원 단위면 그 조건도 자동으로 만족한다.)
+COUPANG_PRICE_ROUNDING_UNIT = Decimal("1000")
 
 
 def _tiered_target_margin_rate(purchase_cost: Decimal, tiers: tuple[tuple[Decimal, Decimal], ...]) -> Decimal:
@@ -133,6 +137,12 @@ def _tiered_target_margin_rate(purchase_cost: Decimal, tiers: tuple[tuple[Decima
         if purchase_cost <= threshold:
             return rate
     return COUPANG_MARGIN_RATE_ABOVE_TOP_TIER
+
+
+def round_up_to_price_unit(price: Decimal, unit: Decimal) -> Decimal:
+    """가격을 unit 단위로 올림한다 — 올림이라 실이익은 목표치보다 살짝 더 남으면 남았지
+    부족해지진 않는다(역마진 방지 원칙 유지)."""
+    return (price / unit).quantize(Decimal("1"), rounding=ROUND_CEILING) * unit
 
 
 def calculate_coupang_selling_price(
@@ -159,7 +169,7 @@ def calculate_coupang_selling_price(
     profit_by_rate = purchase_cost * target_rate
     profit_target = max(profit_by_rate, minimum_fixed_margin)
 
-    return calculate_selling_price(
+    price = calculate_selling_price(
         MarginInputs(
             purchase_cost=purchase_cost,
             market_fee_rate=market_fee_rate,
@@ -168,6 +178,7 @@ def calculate_coupang_selling_price(
             target_margin_rate=Decimal("0"),
         )
     )
+    return round_up_to_price_unit(price, COUPANG_PRICE_ROUNDING_UNIT)
 
 
 def calculate_actual_net_profit(price: Decimal, inputs: MarginInputs) -> Decimal:

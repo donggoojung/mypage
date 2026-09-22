@@ -26,8 +26,10 @@ from app.models.source_mapping import SourceMapping
 from app.services.asset_pipeline import generate_product_assets
 from app.services.margin_engine import (
     COUPANG_OUTBOUND_SHIPPING_COST,
+    COUPANG_PRICE_ROUNDING_UNIT,
     calculate_coupang_selling_price,
     calculate_selling_price_for_platform,
+    round_up_to_price_unit,
 )
 
 # 쿠팡 카테고리 자동추천 API가 실패했을 때(예: 계정에 해당 API 권한이 없어 403) 쓰는
@@ -97,6 +99,9 @@ async def run_pipeline_for_url(url: str, options: PipelineOptions | None = None)
             target_margin_rate=options.target_margin_rate,
             source_shipping_cost=COUPANG_OUTBOUND_SHIPPING_COST,
         )
+        # 자동 정책(calculate_coupang_selling_price)과 동일하게 1,000원 단위로 올림 —
+        # 10원 단위 미만은 쿠팡 API가 등록 자체를 거부하기 때문에 수동 지정 경로도 예외 없음.
+        selling_price = round_up_to_price_unit(selling_price, COUPANG_PRICE_ROUNDING_UNIT)
         print(
             f"  원가(정가) {purchase_cost:,.0f}원, 수동 지정 목표마진율 {options.target_margin_rate:.0%} "
             f"→ 쿠팡 판매가 {selling_price:,}원"

@@ -183,8 +183,11 @@ def test_calculate_coupang_selling_price_uses_tiered_rate_when_above_fixed_floor
     """
     price = calculate_coupang_selling_price(purchase_cost)
 
+    # 최종가는 1,000원 단위로 깔끔하게 끊어져야 한다(1,000원 미만 자리는 전부 0).
+    assert price % Decimal("1000") == 0
+
     expected_profit = max(purchase_cost * expected_rate, COUPANG_MINIMUM_FIXED_MARGIN)
-    expected_price = calculate_selling_price(
+    expected_price_before_rounding = calculate_selling_price(
         MarginInputs(
             purchase_cost=purchase_cost,
             market_fee_rate=PLATFORM_DEFAULT_FEE_RATES[MarketType.COUPANG],
@@ -193,11 +196,15 @@ def test_calculate_coupang_selling_price_uses_tiered_rate_when_above_fixed_floor
             target_margin_rate=Decimal("0"),
         )
     )
-    assert price == expected_price
+    # 1,000원 단위 올림 전 가격보다 낮을 수 없고(항상 올림 방향), 1,000원 미만 차이여야 한다.
+    assert price >= expected_price_before_rounding
+    assert price - expected_price_before_rounding < Decimal("1000")
 
     net_profit = _net_profit_for_coupang(purchase_cost, price)
-    # 실이익이 (최소 고정마진과 비교해 더 큰 쪽의) 기대 이익금과 거의 정확히 일치해야 한다(원단위 올림 오차만 존재).
-    assert abs(net_profit - expected_profit) < Decimal("1")
+    # 실이익이 (최소 고정마진과 비교해 더 큰 쪽의) 기대 이익금 이상이어야 하고, 1,000원 단위
+    # 올림으로 인한 오차(최대 1,000원 미만) 안에서 일치해야 한다.
+    assert net_profit >= expected_profit
+    assert net_profit - expected_profit < Decimal("1000")
 
 
 def test_calculate_coupang_selling_price_fixed_floor_wins_for_cheap_item():
@@ -207,8 +214,8 @@ def test_calculate_coupang_selling_price_fixed_floor_wins_for_cheap_item():
 
     net_profit = _net_profit_for_coupang(purchase_cost, price)
     assert net_profit >= COUPANG_MINIMUM_FIXED_MARGIN
-    # 고정마진 플로어가 채택됐다면, 실이익은 플로어 금액에 근접해야 한다(원단위 올림 오차만 존재).
-    assert net_profit - COUPANG_MINIMUM_FIXED_MARGIN < Decimal("1")
+    # 고정마진 플로어가 채택됐다면, 실이익은 플로어 금액에 근접해야 한다(1,000원 단위 올림 오차만 존재).
+    assert net_profit - COUPANG_MINIMUM_FIXED_MARGIN < Decimal("1000")
 
 
 def test_calculate_coupang_selling_price_never_falls_below_minimum_fixed_margin():
@@ -220,9 +227,17 @@ def test_calculate_coupang_selling_price_never_falls_below_minimum_fixed_margin(
 
 
 def test_calculate_coupang_selling_price_matches_confirmed_business_numbers():
-    """사용자가 확정한 실제 예시 수치(매입가 대비 마진율 기준)로 결과값을 고정 검증한다."""
-    assert calculate_coupang_selling_price(Decimal("10000")) == Decimal("27236")  # 최소 고정마진 1만원 채택
-    assert calculate_coupang_selling_price(Decimal("39000")) == Decimal("62075")  # 39000*30%=11700 채택
-    assert calculate_coupang_selling_price(Decimal("49000")) == Decimal("76828")  # 49000*30%=14700 채택
-    assert calculate_coupang_selling_price(Decimal("89000")) == Decimal("130788")  # 89000*25%=22250 채택
-    assert calculate_coupang_selling_price(Decimal("159000")) == Decimal("212041")  # 159000*15%=23850 채택
+    """사용자가 확정한 실제 예시 수치(매입가 대비 마진율, 1,000원 단위 올림 기준)로 결과값을 고정 검증한다."""
+    assert calculate_coupang_selling_price(Decimal("10000")) == Decimal("28000")  # 최소 고정마진 1만원 채택
+    assert calculate_coupang_selling_price(Decimal("39000")) == Decimal("63000")  # 39000*30%=11700 채택
+    assert calculate_coupang_selling_price(Decimal("49000")) == Decimal("77000")  # 49000*30%=14700 채택
+    assert calculate_coupang_selling_price(Decimal("89000")) == Decimal("131000")  # 89000*25%=22250 채택
+    assert calculate_coupang_selling_price(Decimal("159000")) == Decimal("213000")  # 159000*15%=23850 채택
+
+
+def test_calculate_coupang_selling_price_is_always_a_multiple_of_thousand_won():
+    """1,000원 단위 밑은 전부 0으로 끊는 정책 — 어떤 원가를 넣어도 1,000원의 배수여야 한다
+    (쿠팡 API가 요구하는 10원 단위 조건도 이 정책이 자동으로 만족시킨다)."""
+    for purchase_cost in [Decimal("39000"), Decimal("79900"), Decimal("99999"), Decimal("123456")]:
+        price = calculate_coupang_selling_price(purchase_cost)
+        assert price % Decimal("1000") == 0
