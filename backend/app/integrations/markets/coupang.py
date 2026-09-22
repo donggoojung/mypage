@@ -177,6 +177,10 @@ def build_seller_product_payload(data: CoupangProductInput, seller_info: dict) -
     if not items:
         raise ValueError("모든 사이즈가 품절 상태라 등록 가능한 옵션(items)이 없습니다.")
 
+    print(f"  [진단] size_stock 원본 키: {list(data.size_stock.keys())}", flush=True)
+    print(f"  [진단] items itemName 목록: {[item['itemName'] for item in items]}", flush=True)
+    print(f"  [진단] data.specs: {data.specs}", flush=True)
+
     now = datetime.now(UTC)
     return {
         "displayCategoryCode": data.display_category_code,
