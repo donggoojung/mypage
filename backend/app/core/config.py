@@ -59,12 +59,15 @@ class Settings(BaseSettings):
     # 실제 자동구매를 완료하려면 이 값을 명시적으로 true로 바꿔야 한다 (쿠팡 request_approval과 같은 안전장치).
     rpa_confirm_final_payment: bool = False
 
-    # AWS S3 / CloudFront
+    # AWS S3 / CloudFront (또는 S3 호환 스토리지 — Cloudflare R2 등)
     aws_access_key_id: str = ""
     aws_secret_access_key: str = ""
     aws_region: str = "ap-northeast-2"
     aws_s3_bucket: str = ""
     aws_cloudfront_domain: str = ""
+    # 비워두면 진짜 AWS S3(기본값). Cloudflare R2 등 S3 호환 스토리지를 쓰려면
+    # 그 서비스의 엔드포인트(R2는 https://<계정ID>.r2.cloudflarestorage.com)를 넣는다.
+    aws_s3_endpoint_url: str = ""
 
     # 솔라피
     solapi_api_key: str = ""

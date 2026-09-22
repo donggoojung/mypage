@@ -16,23 +16,42 @@ logger = logging.getLogger(__name__)
 
 
 class S3StorageClient(StorageClient):
-    """실제 AWS S3 업로드 + CloudFront 도메인으로 CDN URL을 조립하는 클라이언트 (PRD 3.3, 8.1)."""
+    """실제 AWS S3(또는 S3 호환 스토리지) 업로드 + CDN URL을 조립하는 클라이언트 (PRD 3.3, 8.1).
+
+    AWS_S3_ENDPOINT_URL을 채우면 Cloudflare R2 등 S3 호환 스토리지에도 그대로 쓸 수 있다
+    (boto3는 S3 프로토콜만 맞으면 실제 엔드포인트가 어디든 상관없다).
+    """
 
     def __init__(self, settings: Settings):
         if not settings.aws_s3_bucket:
             raise ValueError("AWS_S3_BUCKET 환경변수가 설정되어 있지 않습니다.")
+        if not settings.aws_access_key_id or not settings.aws_secret_access_key:
+            raise ValueError("AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY 환경변수가 설정되어 있지 않습니다.")
         self._bucket = settings.aws_s3_bucket
         self._cloudfront_domain = settings.aws_cloudfront_domain
+        self._endpoint_url = settings.aws_s3_endpoint_url or None
         self._client = boto3.client(
             "s3",
             region_name=settings.aws_region,
-            aws_access_key_id=settings.aws_access_key_id or None,
-            aws_secret_access_key=settings.aws_secret_access_key or None,
+            aws_access_key_id=settings.aws_access_key_id,
+            aws_secret_access_key=settings.aws_secret_access_key,
+            endpoint_url=self._endpoint_url,
         )
 
     def _to_public_url(self, key: str) -> str:
         if self._cloudfront_domain:
             return f"https://{self._cloudfront_domain}/{key}"
+        if self._endpoint_url:
+            # R2 등 S3 호환 스토리지는 "버킷.s3.amazonaws.com" 패턴이 없다 — 공개 접근을
+            # 켜둔 버킷이면 엔드포인트 뒤에 버킷/키를 붙인 경로형 URL로도 접근 가능한
+            # 경우가 많지만, 서비스마다 달라 AWS_CLOUDFRONT_DOMAIN(퍼블릭 도메인)을
+            # 채우는 걸 권장한다는 걸 로그로 남긴다.
+            logger.warning(
+                "AWS_S3_ENDPOINT_URL은 설정됐지만 AWS_CLOUDFRONT_DOMAIN(퍼블릭 URL)이 없어 "
+                "엔드포인트 기반 경로형 URL로 추정합니다 — R2라면 퍼블릭 버킷 도메인을 "
+                "AWS_CLOUDFRONT_DOMAIN에 넣는 걸 권장합니다."
+            )
+            return f"{self._endpoint_url.rstrip('/')}/{self._bucket}/{key}"
         return f"https://{self._bucket}.s3.amazonaws.com/{key}"
 
     def upload_file(self, local_path: str, key: str, content_type: str = "image/webp") -> str:
