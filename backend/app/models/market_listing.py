@@ -2,6 +2,7 @@ from datetime import datetime
 
 from sqlalchemy import DateTime, ForeignKey, Numeric, String
 from sqlalchemy import Enum as SAEnum
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
@@ -21,5 +22,9 @@ class MarketListing(Base, TimestampMixin):
     selling_price: Mapped[float] = mapped_column(Numeric(10, 2), nullable=False)
     status: Mapped[ListingStatus] = mapped_column(SAEnum(ListingStatus), default=ListingStatus.DRAFT, nullable=False)
     registered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # {"250": "1234567890", "260": "1234567891", ...} — 사이즈별 쿠팡 옵션ID(vendorItemId).
+    # 승인(판매중) 전에는 쿠팡이 옵션ID를 아직 발급하지 않아 비어있다 — 재고/가격 동기화
+    # (stop_selling_item 등)는 이 값이 채워진 뒤에만 가능하다.
+    vendor_item_ids_json: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
 
     product: Mapped["MasterProduct"] = relationship(back_populates="market_listings")

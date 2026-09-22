@@ -19,9 +19,12 @@ from app.integrations.markets.coupang import (
     resolve_notice_info,
     resolve_seller_info,
     select_notice_category,
+    sync_stock_and_price_to_coupang,
+    sync_vendor_item_ids,
 )
 from app.models.enums import GenerationStatus, ListingStatus, MarketType
 from app.models.generated_asset import GeneratedAsset
+from app.models.market_listing import MarketListing
 from app.models.master_product import MasterProduct
 
 SAMPLE_SIZE_STOCK = {
@@ -352,3 +355,128 @@ def test_register_product_for_master_product_requires_generated_asset(db_session
             size_stock=SAMPLE_SIZE_STOCK,
             use_mock=True,
         )
+
+
+# --- 8. 품절/가격 자동동기화(2단계 안전장치) 검증 -----------------------------------
+
+
+@pytest.mark.asyncio
+async def test_fetch_seller_product_mock_returns_items_with_vendor_item_id():
+    client = CoupangWingClient(use_mock=True)
+
+    detail = await client.fetch_seller_product("12345678")
+
+    assert detail["items"]
+    assert all("vendorItemId" in item for item in detail["items"])
+
+
+@pytest.mark.asyncio
+async def test_stop_and_resume_selling_item_mock_succeed():
+    client = CoupangWingClient(use_mock=True)
+
+    stop_response = await client.stop_selling_item("900001")
+    resume_response = await client.resume_selling_item("900001")
+
+    assert stop_response["code"] == "SUCCESS"
+    assert resume_response["code"] == "SUCCESS"
+
+
+@pytest.mark.asyncio
+async def test_update_item_price_and_quantity_mock_succeed():
+    client = CoupangWingClient(use_mock=True)
+
+    price_response = await client.update_item_price("900001", 150000)
+    quantity_response = await client.update_item_quantity("900001", 10)
+
+    assert price_response["code"] == "SUCCESS"
+    assert quantity_response["code"] == "SUCCESS"
+
+
+@pytest.fixture
+def sample_listing(sample_product_with_asset, db_session):
+    listing = MarketListing(
+        product_id=sample_product_with_asset.product_id,
+        market_type=MarketType.COUPANG,
+        market_product_id="12345678",
+        selling_price=Decimal("192834"),
+        status=ListingStatus.ACTIVE,
+    )
+    db_session.add(listing)
+    db_session.commit()
+    return listing
+
+
+def test_sync_vendor_item_ids_mock_populates_mapping(sample_listing, db_session):
+    mapping = sync_vendor_item_ids(session=db_session, listing=sample_listing, use_mock=True)
+
+    assert mapping  # 비어있지 않아야 함
+    db_session.refresh(sample_listing)
+    assert sample_listing.vendor_item_ids_json == mapping
+
+
+def test_sync_stock_and_price_stops_newly_sold_out_size(sample_listing, db_session):
+    sample_listing.vendor_item_ids_json = {"250": "900001", "260": "900002"}
+    db_session.commit()
+
+    result = sync_stock_and_price_to_coupang(
+        session=db_session,
+        listing=sample_listing,
+        old_size_stock={"250": {"is_sold_out": False}, "260": {"is_sold_out": False}},
+        new_size_stock={"250": {"is_sold_out": False}, "260": {"is_sold_out": True}},
+        use_mock=True,
+    )
+
+    assert result["stopped"] == ["260"]
+    assert result["resumed"] == []
+
+
+def test_sync_stock_and_price_resumes_restocked_size(sample_listing, db_session):
+    sample_listing.vendor_item_ids_json = {"250": "900001"}
+    db_session.commit()
+
+    result = sync_stock_and_price_to_coupang(
+        session=db_session,
+        listing=sample_listing,
+        old_size_stock={"250": {"is_sold_out": True}},
+        new_size_stock={"250": {"is_sold_out": False}},
+        use_mock=True,
+    )
+
+    assert result["resumed"] == ["250"]
+    assert result["stopped"] == []
+
+
+def test_sync_stock_and_price_updates_price_when_changed(sample_listing, db_session):
+    sample_listing.vendor_item_ids_json = {"250": "900001"}
+    sample_listing.selling_price = Decimal("100000")
+    db_session.commit()
+
+    result = sync_stock_and_price_to_coupang(
+        session=db_session,
+        listing=sample_listing,
+        old_size_stock={"250": {"is_sold_out": False}},
+        new_size_stock={"250": {"is_sold_out": False}},
+        new_selling_price=Decimal("150000"),
+        use_mock=True,
+    )
+
+    assert result["price_updated"] is True
+    db_session.refresh(sample_listing)
+    assert sample_listing.selling_price == Decimal("150000")
+
+
+def test_sync_stock_and_price_skips_when_vendor_item_ids_empty(sample_listing, db_session):
+    """승인 전(DRAFT)이라 vendorItemId가 없으면 아무것도 안 하고 조용히 건너뛰어야 한다."""
+    assert sample_listing.vendor_item_ids_json == {}
+
+    result = sync_stock_and_price_to_coupang(
+        session=db_session,
+        listing=sample_listing,
+        old_size_stock={"250": {"is_sold_out": False}},
+        new_size_stock={"250": {"is_sold_out": True}},
+        new_selling_price=Decimal("150000"),
+        use_mock=True,
+    )
+
+    assert result["stopped"] == []
+    assert result["skipped_reason"] is not None

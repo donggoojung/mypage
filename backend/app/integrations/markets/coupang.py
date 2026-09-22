@@ -48,6 +48,16 @@ CATEGORY_PREDICTION_PATH = "/v2/providers/openapi/apis/api/v1/categorization/pre
 # 상품정보제공고시(신발/의류/기타재화 등) 항목이 다르다 — displayCategoryCode로 이
 # API를 호출해 그 카테고리가 실제로 요구하는 항목 목록을 받아와야 한다.
 CATEGORY_METADATA_PATH = "/v2/providers/seller_api/apis/api/v1/marketplace/meta/category-related-metas/display-category-codes/{display_category_code}"
+# 2026-09-22 GitHub 오픈소스 구현체(kyungdongseo/coupang product.py)로 확인된 경로 —
+# 재고/품절 자동동기화(품절 사고 방지)에 쓴다. vendorItemId는 상품이 승인(판매중)된
+# 뒤에만 발급되므로, 아래 4개 API는 DRAFT(임시저장) 상태에서는 호출할 수 없다.
+SELLER_PRODUCT_DETAIL_PATH = "/v2/providers/seller_api/apis/api/v1/marketplace/seller-products/{seller_product_id}"
+ITEM_STOP_SELLING_PATH = "/v2/providers/seller_api/apis/api/v1/marketplace/vendor-items/{vendor_item_id}/sales/stop"
+ITEM_RESUME_SELLING_PATH = "/v2/providers/seller_api/apis/api/v1/marketplace/vendor-items/{vendor_item_id}/sales/resume"
+ITEM_PRICE_UPDATE_PATH = "/v2/providers/seller_api/apis/api/v1/marketplace/vendor-items/{vendor_item_id}/prices/{price}"
+ITEM_QUANTITY_UPDATE_PATH = (
+    "/v2/providers/seller_api/apis/api/v1/marketplace/vendor-items/{vendor_item_id}/quantities/{quantity}"
+)
 
 # 카테고리 메타정보 조회가 실패했을 때(권한 문제 등)만 쓰는 폴백 — 실API 미검증인 예시값이라
 # 부정확할 수 있다. 정상 흐름에서는 항상 위 API가 돌려주는 실제 값을 우선 사용한다.
@@ -489,6 +499,90 @@ class CoupangWingClient:
             body = response.json()
             return body.get("data", body)
 
+    # --- 품절/가격 자동동기화(2단계 안전장치)용 메서드 -----------------------------
+    # 실API 미검증 — kyungdongseo/coupang(GitHub) 소스로 경로만 확인했고, 실제 승인된
+    # (판매중) 상품이 생기기 전까지는 scripts/test_stock_sync.py 등으로 검증이 필요하다.
+
+    async def fetch_seller_product(self, seller_product_id: str) -> dict:
+        """등록된 상품의 상세 정보(사이즈별 vendorItemId 포함)를 조회한다."""
+        if self._use_mock:
+            return self._mock_seller_product(seller_product_id)
+        return await self._real_fetch_seller_product(seller_product_id)
+
+    @staticmethod
+    def _mock_seller_product(seller_product_id: str) -> dict:
+        return {
+            "sellerProductId": seller_product_id,
+            "items": [
+                {"itemName": "250", "vendorItemId": 90000001, "salePrice": 63700},
+                {"itemName": "260", "vendorItemId": 90000002, "salePrice": 63700},
+            ],
+        }
+
+    async def _real_fetch_seller_product(self, seller_product_id: str) -> dict:
+        path = SELLER_PRODUCT_DETAIL_PATH.format(seller_product_id=seller_product_id)
+        headers = _build_authorization_header(
+            method="GET", path=path, access_key=self._settings.coupang_access_key, secret_key=self._settings.coupang_secret_key
+        )
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.get(f"{COUPANG_API_HOST}{path}", headers=headers)
+            response.raise_for_status()
+            body = response.json()
+            return body.get("data", body)
+
+    async def stop_selling_item(self, vendor_item_id: str) -> dict:
+        """옵션(사이즈) 1개를 판매중지(품절 등) 처리한다 — 소싱처 품절 시 즉시 호출해야 한다."""
+        if self._use_mock:
+            return {"code": "SUCCESS", "message": "(Mock) 판매중지 처리됨", "data": None}
+        return await self._real_item_action(ITEM_STOP_SELLING_PATH, vendor_item_id)
+
+    async def resume_selling_item(self, vendor_item_id: str) -> dict:
+        """옵션(사이즈) 1개의 판매중지를 해제한다 — 소싱처 재입고 시 호출한다."""
+        if self._use_mock:
+            return {"code": "SUCCESS", "message": "(Mock) 판매재개 처리됨", "data": None}
+        return await self._real_item_action(ITEM_RESUME_SELLING_PATH, vendor_item_id)
+
+    async def _real_item_action(self, path_template: str, vendor_item_id: str) -> dict:
+        path = path_template.format(vendor_item_id=vendor_item_id)
+        headers = _build_authorization_header(
+            method="PUT", path=path, access_key=self._settings.coupang_access_key, secret_key=self._settings.coupang_secret_key
+        )
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.put(f"{COUPANG_API_HOST}{path}", headers=headers)
+            response.raise_for_status()
+            return response.json()
+
+    async def update_item_price(self, vendor_item_id: str, price: int) -> dict:
+        """옵션(사이즈) 1개의 판매가를 변경한다 — 소싱처 원가 상승 시 즉시 반영해야 한다."""
+        if self._use_mock:
+            return {"code": "SUCCESS", "message": f"(Mock) 가격이 {price}원으로 변경됨", "data": None}
+        path = ITEM_PRICE_UPDATE_PATH.format(vendor_item_id=vendor_item_id, price=price)
+        query = "?forceSalePriceUpdate=true"
+        headers = _build_authorization_header(
+            method="PUT",
+            path=path,
+            access_key=self._settings.coupang_access_key,
+            secret_key=self._settings.coupang_secret_key,
+            query=query,
+        )
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.put(f"{COUPANG_API_HOST}{path}{query}", headers=headers)
+            response.raise_for_status()
+            return response.json()
+
+    async def update_item_quantity(self, vendor_item_id: str, quantity: int) -> dict:
+        """옵션(사이즈) 1개의 재고수량을 변경한다."""
+        if self._use_mock:
+            return {"code": "SUCCESS", "message": f"(Mock) 재고가 {quantity}개로 변경됨", "data": None}
+        path = ITEM_QUANTITY_UPDATE_PATH.format(vendor_item_id=vendor_item_id, quantity=quantity)
+        headers = _build_authorization_header(
+            method="PUT", path=path, access_key=self._settings.coupang_access_key, secret_key=self._settings.coupang_secret_key
+        )
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.put(f"{COUPANG_API_HOST}{path}", headers=headers)
+            response.raise_for_status()
+            return response.json()
+
 
 async def resolve_seller_info(settings: Settings | None = None, use_mock: bool | None = None, vendor_id: str | None = None) -> dict:
     """출고지/반품지를 쿠팡 API로 직접 조회해, 사용자가 수동 입력하지 않아도 되는
@@ -744,3 +838,85 @@ def register_product_for_master_product(
     session.commit()
 
     return listing
+
+
+# --- 품절/가격 자동동기화 (2단계 안전장치: 강제취소 패널티/계정정지 방지) ----------------
+
+
+def sync_vendor_item_ids(
+    session: Session, listing: MarketListing, use_mock: bool | None = None, settings: Settings | None = None
+) -> dict[str, str]:
+    """등록된 상품의 사이즈별 vendorItemId(쿠팡 옵션ID)를 조회해 listing에 저장한다.
+
+    승인(판매중) 전에는 쿠팡이 아직 옵션ID를 발급하지 않으므로, 이 함수는 상품이
+    request_approval=True로 승인 완료된 뒤에 한 번 호출해야 의미가 있다. 이 값이 있어야
+    sync_stock_and_price_to_coupang()으로 품절/가격을 실시간 반영할 수 있다.
+    """
+    if not listing.market_product_id:
+        raise CoupangRegistrationError(f"listing_id={listing.listing_id}에 market_product_id가 없습니다.")
+
+    settings = settings or get_settings()
+    client = CoupangWingClient(settings=settings, use_mock=use_mock)
+    detail = asyncio.run(client.fetch_seller_product(listing.market_product_id))
+
+    mapping: dict[str, str] = {}
+    for item in detail.get("items", []):
+        item_name = item.get("itemName")
+        vendor_item_id = item.get("vendorItemId")
+        if item_name and vendor_item_id:
+            mapping[str(item_name)] = str(vendor_item_id)
+
+    listing.vendor_item_ids_json = mapping
+    session.commit()
+    return mapping
+
+
+def sync_stock_and_price_to_coupang(
+    session: Session,
+    listing: MarketListing,
+    old_size_stock: dict[str, dict],
+    new_size_stock: dict[str, dict],
+    new_selling_price: Decimal | None = None,
+    use_mock: bool | None = None,
+    settings: Settings | None = None,
+) -> dict:
+    """소싱처(ABC마트) 재고/가격 변경을 실제 쿠팡 등록 상품에 즉시 반영한다.
+
+    가장 흔한 위탁판매 사고("소싱처 품절인데 쿠팡에서 계속 팔려서 강제취소 패널티")를
+    막는 핵심 로직 — crawl_tasks.refresh_all_source_mappings가 새 재고를 확인한 직후
+    호출한다. 사이즈가 새로 품절되면 즉시 판매중지, 재입고되면 판매재개, 원가가 올라
+    판매가가 바뀌면 즉시 가격도 갱신한다.
+
+    listing.vendor_item_ids_json이 비어있으면(= 아직 승인/판매중 상태가 아님) 동기화할
+    대상 자체가 없으므로 조용히 건너뛴다(에러 아님) — sync_vendor_item_ids()를 먼저
+    호출해 채워야 한다.
+    """
+    result: dict = {"stopped": [], "resumed": [], "price_updated": False, "skipped_reason": None}
+
+    if not listing.vendor_item_ids_json:
+        result["skipped_reason"] = "vendor_item_ids_json이 비어있음 (상품이 아직 승인/판매중 상태가 아님)"
+        return result
+
+    settings = settings or get_settings()
+    client = CoupangWingClient(settings=settings, use_mock=use_mock)
+
+    for size, vendor_item_id in listing.vendor_item_ids_json.items():
+        old_sold_out = (old_size_stock.get(size) or {}).get("is_sold_out", False)
+        # 소싱처 사이트에서 그 사이즈 자체가 사라진 경우(단종 등)도 품절과 동일하게 취급한다.
+        new_sold_out = (new_size_stock.get(size) or {}).get("is_sold_out", size not in new_size_stock)
+
+        if new_sold_out and not old_sold_out:
+            asyncio.run(client.stop_selling_item(vendor_item_id))
+            result["stopped"].append(size)
+        elif not new_sold_out and old_sold_out:
+            asyncio.run(client.resume_selling_item(vendor_item_id))
+            result["resumed"].append(size)
+
+    if new_selling_price is not None and Decimal(str(listing.selling_price)) != new_selling_price:
+        for vendor_item_id in listing.vendor_item_ids_json.values():
+            asyncio.run(client.update_item_price(vendor_item_id, int(new_selling_price)))
+        listing.selling_price = new_selling_price
+        result["price_updated"] = True
+
+    session.commit()
+    return result
