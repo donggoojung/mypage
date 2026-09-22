@@ -77,7 +77,10 @@ class ABCMartScraper(BaseScraper):
 
                 # "networkidle"은 광고/채팅위젯/재고 폴링 때문에 실사이트에서는 끝까지
                 # 도달하지 못하고 무한 대기로 이어질 수 있다 — 기본 HTML만 빠르게 받는다.
-                await page.goto(product_url, wait_until="domcontentloaded", timeout=20000)
+                # 2026-09-22: 자동화 브라우저는 매번 캐시 없는 새 프로필로 열려 실제
+                # 사용자가 쓰는 브라우저(캐시 있음)보다 첫 로딩이 느릴 수 있어 20초를
+                # 45초로 늘렸다 — 반복 타임아웃이 실제로 있었음(사이트 자체는 정상).
+                await page.goto(product_url, wait_until="domcontentloaded", timeout=45000)
 
                 # 이 사이트는 React/Vue CSR 구조(PRD 2.1)라 상품 데이터가 XHR로 뒤늦게
                 # 채워진다. JSON-LD나 가격 요소가 나타날 때까지 최대 10초만 별도로 기다리고,
