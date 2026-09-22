@@ -178,10 +178,15 @@ def build_seller_product_payload(data: CoupangProductInput, seller_info: dict) -
                 # "사이즈"가 아니라 "신발사이즈"다 — 잘못된 이름을 쓰면 쿠팡이 모든
                 # 옵션을 구분 안 된 것으로 취급해 "중복 옵션값이 있습니다"로 거부한다.
                 "attributes": [*attributes_base, {"attributeTypeName": "신발사이즈", "attributeValueName": size}],
+                # 2026-09-22 실API 검증됨: contentsType/detailType은 "TEXT"/"TEXT" 조합이어야
+                # 하고, content는 이미지 URL이 아니라 그 URL을 담은 HTML 문자열이어야 한다
+                # ("HTML"+"IMAGE" 조합은 "세부타입 설정이 잘못되었습니다"로 반려된다).
                 "contents": [
                     {
-                        "contentsType": "HTML",
-                        "contentDetails": [{"content": data.detail_image_url, "detailType": "IMAGE"}],
+                        "contentsType": "TEXT",
+                        "contentDetails": [
+                            {"content": f"<img src='{data.detail_image_url}' />", "detailType": "TEXT"}
+                        ],
                     }
                 ],
             }
@@ -643,6 +648,30 @@ def register_product_for_master_product(
             "asset_generation_tasks.generate_assets_for_product를 먼저 실행하세요."
         )
 
+    thumbnail_image_url = asset.ai_thumbnail_url
+    detail_image_url = asset.ai_detail_image_url
+    if not thumbnail_image_url.startswith("http") or not detail_image_url.startswith("http"):
+        # 2026-09-22 실API 검증됨: USE_MOCK_STORAGE=true라 AI 이미지가 아직 실제 인터넷
+        # URL이 아니라 로컬 경로다 — 쿠팡이 다운로드를 시도하다 실패해 반려된다(승인반려
+        # 사유: "다운로드 할 수 없는 이미지들이 존재합니다"). S3 실연동 전까지는, 이미
+        # 실제 공개 URL인 원본 소스 이미지(스크래핑한 ABC마트 상품 사진)로 대체한다.
+        from app.models.source_mapping import SourceMapping
+
+        mapping = session.query(SourceMapping).filter_by(product_id=product_id).first()
+        if mapping and mapping.source_image_url and mapping.source_image_url.startswith("http"):
+            print(
+                f"  [진단] AI 이미지가 실제 URL이 아니어서({thumbnail_image_url}) "
+                f"원본 소스 이미지로 대체합니다: {mapping.source_image_url}",
+                flush=True,
+            )
+            thumbnail_image_url = mapping.source_image_url
+            detail_image_url = mapping.source_image_url
+        else:
+            raise ValueError(
+                f"product_id={product_id}의 이미지가 실제 URL이 아니고(로컬 Mock 경로), "
+                "대체할 원본 소스 이미지도 없습니다. AWS S3 연동(USE_MOCK_STORAGE=false)이 필요합니다."
+            )
+
     if seller_info is None:
         seller_info = asyncio.run(resolve_seller_info(settings=settings, use_mock=use_mock, vendor_id=vendor_id))
 
@@ -664,8 +693,8 @@ def register_product_for_master_product(
         selling_price=selling_price,
         vendor_id=vendor_id,
         vendor_user_id=settings.coupang_vendor_user_id,
-        thumbnail_image_url=asset.ai_thumbnail_url,
-        detail_image_url=asset.ai_detail_image_url,
+        thumbnail_image_url=thumbnail_image_url,
+        detail_image_url=detail_image_url,
         size_stock=size_stock,
         specs=product.raw_specs_json or {},
         request_approval=request_approval,
