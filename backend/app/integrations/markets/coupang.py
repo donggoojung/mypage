@@ -128,6 +128,7 @@ def build_seller_product_payload(data: CoupangProductInput, seller_info: dict) -
         {"noticeCategoryName": data.notice_category_name, "noticeCategoryDetailName": key, "content": data.specs.get(key, "상품 상세 참조")}
         for key in data.notice_detail_keys
     ]
+    print(f"  [진단] 제출할 notices: {notices}", flush=True)
     attributes_base = [{"attributeTypeName": key, "attributeValueName": value} for key, value in data.specs.items()]
 
     items = []
@@ -562,7 +563,10 @@ async def resolve_notice_info(
     settings = settings or get_settings()
     client = CoupangWingClient(settings=settings, use_mock=use_mock)
     metadata = await client.fetch_category_metadata(display_category_code)
-    return select_notice_category(metadata)
+    print(f"  [진단] 카테고리 고시정보 메타데이터 원본: {metadata}", flush=True)
+    result = select_notice_category(metadata)
+    print(f"  [진단] 선택된 고시카테고리/항목: {result}", flush=True)
+    return result
 
 
 def register_product_for_master_product(
