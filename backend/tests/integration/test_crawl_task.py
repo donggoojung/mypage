@@ -107,7 +107,7 @@ def test_refresh_syncs_newly_sold_out_size_to_coupang(db_session):
         product_id=product.product_id,
         market_type=MarketType.COUPANG,
         market_product_id="12345678",
-        selling_price=Decimal("209924"),  # 이미 최신 계산가와 같게 둬서 가격변경은 안 일어나게 함
+        selling_price=Decimal("193827"),  # 이미 최신 계산가와 같게 둬서 가격변경은 안 일어나게 함
         status=ListingStatus.ACTIVE,
         vendor_item_ids_json={"250": "900001", "260": "900002", "270": "900003"},
     )
@@ -155,8 +155,8 @@ def test_refresh_syncs_price_increase_to_coupang(db_session):
     sync_entry = result["synced_to_coupang"][0]
     assert sync_entry["price_updated"] is True
     db_session.refresh(listing)
-    # 원가 139000원은 10~15만원 구간(목표마진 20%) + 택배비 4000원 반영 역마진방지 공식 결과.
-    assert listing.selling_price == Decimal("209924")
+    # 원가 139000원은 10~15만원 구간(매입가 대비 목표마진 20% = 27,800원) + 택배비 4000원 반영 결과.
+    assert listing.selling_price == Decimal("193827")
 
 
 def test_refresh_skips_coupang_sync_for_draft_listing_without_vendor_item_ids(db_session):

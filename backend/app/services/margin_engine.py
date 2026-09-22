@@ -144,38 +144,30 @@ def calculate_coupang_selling_price(
 ) -> Decimal:
     """사용자가 확정한 쿠팡 판매가 정책으로 판매가를 산출한다.
 
-    1) 매입원가 구간별 목표마진율(COUPANG_MARGIN_TIERS)로 계산한 가격과
-    2) "무조건 최소 고정마진(기본 1만원)은 남긴다"로 계산한 가격을 각각 구해서,
-    둘 중 더 높은 쪽을 최종가로 쓴다 — 싼 상품일수록 %마진만으로는 절대금액이
-    너무 적게 남을 수 있어(예: 원가 1만원×30%는 수수료/배송비 떼면 1만원도 안 남음),
-    이 경우 최소 고정마진 쪽이 자동으로 더 높게 나와 그쪽이 채택된다.
-    쿠팡 수수료(market_fee_rate)와 택배비(outbound_shipping_cost)는 두 계산 모두에
-    반영된다 — 둘 다 실제로 나가는 비용이라 마진 계산에서 빠지면 안 되기 때문이다.
+    목표마진율은 "매입원가 대비" 이익률이다(매출액 대비가 아님) — 즉 원가 39,000원에
+    목표마진율 30%면, 실제로 남기려는 이익금은 "판매가의 30%"가 아니라
+    "39,000원 × 30% = 11,700원"이다. 그래서 구간별 목표마진율로 이익금(원 단위)을
+    먼저 구하고, "무조건 최소 고정마진(기본 1만원)은 남긴다"는 하한선과 비교해
+    더 큰 금액을 최종 이익금으로 채택한 뒤, 그 이익금을 MarginInputs.fixed_margin으로
+    넘겨 역마진 방지 공식(판매가 = (원가+택배비+이익금)/(1-수수료율))으로 판매가를
+    산출한다. target_margin_rate는 쓰지 않는다(그건 매출액 대비 마진율이라
+    이 정책의 "매입가 대비" 정의와 다른 값이 되기 때문).
+    쿠팡 수수료(market_fee_rate)와 택배비(outbound_shipping_cost)는 실제로 나가는
+    비용이라 이익금 계산과 무관하게 판매가에는 항상 반영된다.
     """
     target_rate = _tiered_target_margin_rate(purchase_cost, tiers)
+    profit_by_rate = purchase_cost * target_rate
+    profit_target = max(profit_by_rate, minimum_fixed_margin)
 
-    price_by_rate = calculate_selling_price(
+    return calculate_selling_price(
         MarginInputs(
             purchase_cost=purchase_cost,
             market_fee_rate=market_fee_rate,
             source_shipping_cost=outbound_shipping_cost,
-            target_margin_rate=target_rate,
-        )
-    )
-    price_by_fixed_floor = calculate_selling_price(
-        MarginInputs(
-            purchase_cost=purchase_cost,
-            market_fee_rate=market_fee_rate,
-            source_shipping_cost=outbound_shipping_cost,
-            fixed_margin=minimum_fixed_margin,
-            # MarginInputs.target_margin_rate 기본값(0.30)을 그대로 두면 "최소 고정마진"에
-            # 목표마진율까지 더해져 순수 플로어가 아니게 된다 — 여기선 0으로 명시해서
-            # 정말로 "고정마진 1만원만 무조건 보장"하는 가격만 계산한다.
+            fixed_margin=profit_target,
             target_margin_rate=Decimal("0"),
         )
     )
-
-    return max(price_by_rate, price_by_fixed_floor)
 
 
 def calculate_actual_net_profit(price: Decimal, inputs: MarginInputs) -> Decimal:

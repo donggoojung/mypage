@@ -175,16 +175,29 @@ def _net_profit_for_coupang(purchase_cost: Decimal, price: Decimal) -> Decimal:
     ],
 )
 def test_calculate_coupang_selling_price_uses_tiered_rate_when_above_fixed_floor(purchase_cost, expected_rate):
-    """매입원가가 커서 %마진만으로도 최소 고정마진(1만원)을 넘길 때는 구간별 목표마진율 가격이 채택되어야 한다."""
+    """매입원가가 커서 %마진만으로도 최소 고정마진(1만원)을 넘길 때는 구간별 목표마진율 가격이 채택되어야 한다.
+
+    목표마진율은 "매입원가 대비" 이익률이다 — 예: 원가 30,000원에 30%면 이익금은
+    30,000원×30%=9,000원(매출액의 30%가 아니다). 그래서 기대 이익금을
+    purchase_cost*expected_rate로 직접 구해 MarginInputs.fixed_margin으로 넘긴다.
+    """
     price = calculate_coupang_selling_price(purchase_cost)
 
-    expected_price = calculate_selling_price_for_platform(
-        market_type=MarketType.COUPANG,
-        purchase_cost=purchase_cost,
-        target_margin_rate=expected_rate,
-        source_shipping_cost=COUPANG_OUTBOUND_SHIPPING_COST,
+    expected_profit = max(purchase_cost * expected_rate, COUPANG_MINIMUM_FIXED_MARGIN)
+    expected_price = calculate_selling_price(
+        MarginInputs(
+            purchase_cost=purchase_cost,
+            market_fee_rate=PLATFORM_DEFAULT_FEE_RATES[MarketType.COUPANG],
+            source_shipping_cost=COUPANG_OUTBOUND_SHIPPING_COST,
+            fixed_margin=expected_profit,
+            target_margin_rate=Decimal("0"),
+        )
     )
     assert price == expected_price
+
+    net_profit = _net_profit_for_coupang(purchase_cost, price)
+    # 실이익이 (최소 고정마진과 비교해 더 큰 쪽의) 기대 이익금과 거의 정확히 일치해야 한다(원단위 올림 오차만 존재).
+    assert abs(net_profit - expected_profit) < Decimal("1")
 
 
 def test_calculate_coupang_selling_price_fixed_floor_wins_for_cheap_item():
@@ -207,6 +220,9 @@ def test_calculate_coupang_selling_price_never_falls_below_minimum_fixed_margin(
 
 
 def test_calculate_coupang_selling_price_matches_confirmed_business_numbers():
-    """사용자가 확정한 실제 예시 수치(원가 1만원/4.9만원)로 결과값을 고정 검증한다."""
-    assert calculate_coupang_selling_price(Decimal("10000")) == Decimal("27236")
-    assert calculate_coupang_selling_price(Decimal("49000")) == Decimal("91191")
+    """사용자가 확정한 실제 예시 수치(매입가 대비 마진율 기준)로 결과값을 고정 검증한다."""
+    assert calculate_coupang_selling_price(Decimal("10000")) == Decimal("27236")  # 최소 고정마진 1만원 채택
+    assert calculate_coupang_selling_price(Decimal("39000")) == Decimal("62075")  # 39000*30%=11700 채택
+    assert calculate_coupang_selling_price(Decimal("49000")) == Decimal("76828")  # 49000*30%=14700 채택
+    assert calculate_coupang_selling_price(Decimal("89000")) == Decimal("130788")  # 89000*25%=22250 채택
+    assert calculate_coupang_selling_price(Decimal("159000")) == Decimal("212041")  # 159000*15%=23850 채택
