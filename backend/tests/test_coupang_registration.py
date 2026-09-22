@@ -113,6 +113,16 @@ def test_build_seller_product_payload_requests_approval_only_when_explicitly_tru
     assert payload["requested"] is True
 
 
+def test_build_seller_product_payload_uses_seo_title_when_provided():
+    """Gemini가 만든 SEO 상품명이 있으면, 브랜드+상품명+품번을 이어붙이는 대신 그대로 써야 한다."""
+    data = _sample_input()
+    data.seo_title = "[나이키] 에어포스1 CW2288-111 화이트 클래식"
+    payload = build_seller_product_payload(data, SAMPLE_SELLER_INFO)
+
+    assert payload["sellerProductName"] == "[나이키] 에어포스1 CW2288-111 화이트 클래식"
+    assert payload["displayProductName"] == "[나이키] 에어포스1 CW2288-111 화이트 클래식"
+
+
 def test_build_seller_product_payload_raises_when_all_sizes_sold_out():
     data = _sample_input()
     data.size_stock = {"250": {"stock": 0, "is_sold_out": True}}

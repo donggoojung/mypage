@@ -26,6 +26,7 @@ import httpx
 from sqlalchemy.orm import Session
 
 from app.core.config import Settings, get_settings
+from app.integrations.llm.gemini_client import GeminiClient
 from app.models.enums import ListingStatus, MarketType
 from app.models.generated_asset import GeneratedAsset
 from app.models.market_listing import MarketListing
@@ -120,6 +121,10 @@ class CoupangProductInput:
     # 조회 실패 시에만 아래 기본값(신발 카테고리 예시, 실API 미검증)을 그대로 쓴다.
     notice_category_name: str = DEFAULT_NOTICE_CATEGORY
     notice_detail_keys: tuple[str, ...] = DEFAULT_NOTICE_DETAIL_KEYS
+    # Gemini(GeminiClient.generate_seo_title)가 만든 SEO 정제 상품명 — 있으면
+    # sellerProductName/displayProductName에 그대로 쓰고, 없으면(조회 실패 등)
+    # 기존처럼 brand_name+product_name+style_code를 이어붙인 값으로 폴백한다.
+    seo_title: str | None = None
 
 
 def build_seller_product_payload(data: CoupangProductInput, seller_info: dict) -> dict:
@@ -202,11 +207,11 @@ def build_seller_product_payload(data: CoupangProductInput, seller_info: dict) -
     now = datetime.now(UTC)
     return {
         "displayCategoryCode": data.display_category_code,
-        "sellerProductName": f"{data.brand_name} {data.product_name} {data.style_code}",
+        "sellerProductName": data.seo_title or f"{data.brand_name} {data.product_name} {data.style_code}",
         "vendorId": data.vendor_id,
         "saleStartedAt": now.strftime("%Y-%m-%dT%H:%M:%S"),
         "saleEndedAt": now.replace(year=now.year + 2).strftime("%Y-%m-%dT%H:%M:%S"),
-        "displayProductName": f"{data.brand_name} {data.product_name}",
+        "displayProductName": data.seo_title or f"{data.brand_name} {data.product_name}",
         "brand": data.brand_name,
         "generalProductName": data.product_name,
         # 2026-09-21 실API 검증됨: "SEQUENCE"가 아니라 "SEQUENCIAL"(오타처럼 보이지만
@@ -685,6 +690,20 @@ def register_product_for_master_product(
         notice_category_name, notice_detail_keys = DEFAULT_NOTICE_CATEGORY, list(DEFAULT_NOTICE_DETAIL_KEYS)
         print(f"  카테고리 고시정보 자동조회 실패({exc}) — 기본값({notice_category_name})으로 등록합니다.")
 
+    try:
+        seo_title = asyncio.run(
+            GeminiClient(settings=settings).generate_seo_title(
+                brand=product.brand_name,
+                raw_title=product.product_name,
+                style_code=product.style_code,
+                category=notice_category_name,
+            )
+        )
+        print(f"  [진단] Gemini SEO 상품명: {seo_title!r}", flush=True)
+    except Exception as exc:  # noqa: BLE001 - 부가 기능(SEO 정제)이 등록 전체를 막으면 안 된다.
+        seo_title = None
+        print(f"  Gemini SEO 상품명 생성 실패({exc}) — 기존 방식(브랜드+상품명+품번)으로 등록합니다.")
+
     payload_input = CoupangProductInput(
         style_code=product.style_code,
         brand_name=product.brand_name,
@@ -700,6 +719,7 @@ def register_product_for_master_product(
         request_approval=request_approval,
         notice_category_name=notice_category_name,
         notice_detail_keys=tuple(notice_detail_keys),
+        seo_title=seo_title,
     )
     payload = build_seller_product_payload(payload_input, seller_info)
 
