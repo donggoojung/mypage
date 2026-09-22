@@ -18,6 +18,7 @@ from app.integrations.markets.coupang import (
     register_product_for_master_product,
     resolve_notice_info,
     resolve_seller_info,
+    select_brand_id,
     select_notice_category,
     sync_stock_and_price_to_coupang,
     sync_vendor_item_ids,
@@ -330,6 +331,49 @@ async def test_search_brand_id_mock_returns_non_empty_id():
 
     assert brand_id
     assert "나이키" in brand_id
+
+
+# 2026-09-22 실API 응답으로 확인된 실제 구조를 그대로 본떠 만든 샘플 — 브랜드 검색 API가
+# 리스트를 "items" 키로 돌려준다는 걸 실사용 중 확인했다(처음엔 "content"/"brands"로
+# 잘못 추측했다가 못 찾는 버그가 있었음).
+SAMPLE_BRAND_SEARCH_RESPONSE = {
+    "code": "SUCCESS",
+    "message": "OK",
+    "data": {
+        "page": 1,
+        "countPerPage": 10,
+        "totalCount": 2,
+        "items": [
+            {"brandId": "KR-00005", "brandName": "에비수", "brandLogoUrl": None, "isUIDRequired": False},
+            {"brandId": "KR-99999", "brandName": "무관한브랜드", "brandLogoUrl": None, "isUIDRequired": False},
+        ],
+    },
+}
+
+
+def test_select_brand_id_matches_exact_name():
+    brand_id = select_brand_id(SAMPLE_BRAND_SEARCH_RESPONSE, "에비수")
+
+    assert brand_id == "KR-00005"
+
+
+def test_select_brand_id_matches_prefix_when_source_appends_extra_text():
+    """ABC마트가 "에비수 셀렉트"처럼 브랜드명 뒤에 자체 라인명을 붙여도, 앞부분이 일치하면 찾아야 한다."""
+    brand_id = select_brand_id(SAMPLE_BRAND_SEARCH_RESPONSE, "에비수 셀렉트")
+
+    assert brand_id == "KR-00005"
+
+
+def test_select_brand_id_returns_none_when_nothing_matches():
+    brand_id = select_brand_id(SAMPLE_BRAND_SEARCH_RESPONSE, "완전히다른브랜드")
+
+    assert brand_id is None
+
+
+def test_select_brand_id_returns_none_for_empty_items():
+    brand_id = select_brand_id({"code": "SUCCESS", "data": {"items": []}}, "에비수")
+
+    assert brand_id is None
 
 
 # --- 7. 카테고리별 상품정보제공고시 항목 조회 검증 -------------------------------

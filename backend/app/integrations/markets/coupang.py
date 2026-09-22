@@ -472,47 +472,48 @@ class CoupangWingClient:
         스크래핑한 브랜드명 텍스트가 쿠팡에 등록된 브랜드명과 완전히 일치하지 않으면
         상품 등록이 "브랜드 ID가 필요합니다"로 거부되는 경우가 있다(2026-09-22 실사용
         중 발견) — 이 API로 정확한 brandId를 찾아 등록 페이로드에 같이 넣어주면 통과된다.
-        검색 결과 중 브랜드명이 정확히 일치하는 항목이 있을 때만 그 ID를 쓴다(엉뚱한
-        브랜드가 잘못 붙는 걸 막기 위해) — 못 찾으면 None을 돌려주고, 호출부는 기존처럼
-        브랜드명 텍스트만 보내는 방식으로 계속 진행한다.
+
+        2026-09-22 실API로 검증됨: ABC마트는 "에비수 셀렉트"처럼 브랜드명 뒤에 자체
+        라인/컬렉션명을 붙여서 표기하는데, 쿠팡에 등록된 정식 브랜드명은 "에비수"처럼
+        그 앞부분만인 경우가 있다(WING 카탈로그 검색으로 실제 확인함). 그래서 전체
+        문자열로 먼저 검색해보고, 정확히 일치하는 게 없으면 첫 단어만으로 다시 검색한다.
+        그래도 정확히 일치하는 게 없으면, 검색 결과 브랜드명이 원본 브랜드명 앞부분과
+        일치하는 것도 인정한다(예: "에비수"가 "에비수 셀렉트"로 시작하면 인정) — 완전
+        무관한 브랜드가 잘못 붙는 것만 막으면 되므로, 접두어 일치까지는 안전하다고 본다.
         실API 미검증 — 정확한 요청/응답 필드명은 실API로 재확인이 필요하다.
         """
         if self._use_mock:
             return self._mock_search_brand_id(brand_name)
-        return await self._real_search_brand_id(brand_name)
+
+        queries = [brand_name]
+        first_word = brand_name.split()[0] if brand_name.split() else brand_name
+        if first_word != brand_name:
+            queries.append(first_word)
+
+        for query in queries:
+            brand_id = await self._real_search_brand_id(query, original_brand_name=brand_name)
+            if brand_id is not None:
+                return brand_id
+        return None
 
     @staticmethod
     def _mock_search_brand_id(brand_name: str) -> str:
         return f"MOCK-BRAND-{brand_name}"
 
-    async def _real_search_brand_id(self, brand_name: str) -> str | None:
+    async def _real_search_brand_id(self, query: str, original_brand_name: str) -> str | None:
         headers = _build_authorization_header(
             method="POST",
             path=BRAND_SEARCH_PATH,
             access_key=self._settings.coupang_access_key,
             secret_key=self._settings.coupang_secret_key,
         )
-        payload = {"brandName": brand_name}
+        payload = {"brandName": query}
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.post(f"{COUPANG_API_HOST}{BRAND_SEARCH_PATH}", headers=headers, json=payload)
             response.raise_for_status()
             body = response.json()
-        print(f"  [진단] 브랜드 검색 원본 응답({brand_name!r}): {body}", flush=True)
-
-        candidates = body.get("data") if isinstance(body, dict) else body
-        if isinstance(candidates, dict):
-            candidates = candidates.get("content") or candidates.get("brands") or [candidates]
-        if not isinstance(candidates, list):
-            return None
-
-        for item in candidates:
-            if not isinstance(item, dict):
-                continue
-            name = item.get("brandName") or item.get("name") or item.get("brand")
-            brand_id = item.get("brandId") or item.get("id")
-            if name == brand_name and brand_id is not None:
-                return str(brand_id)
-        return None
+        print(f"  [진단] 브랜드 검색 원본 응답(검색어={query!r}): {body}", flush=True)
+        return select_brand_id(body, original_brand_name)
 
     async def fetch_category_metadata(self, display_category_code: int) -> dict:
         """전시카테고리가 실제로 요구하는 상품정보제공고시/옵션 등의 메타정보를 조회한다.
@@ -750,6 +751,38 @@ def select_notice_category(metadata: dict) -> tuple[str, list[str]]:
     if not detail_names:
         raise CoupangRegistrationError(f"선택된 고시카테고리에 항목이 없습니다: {chosen}")
     return chosen.get("noticeCategoryName", ""), detail_names
+
+
+def select_brand_id(search_response: dict, original_brand_name: str) -> str | None:
+    """브랜드 검색 API 응답에서 원본 브랜드명과 맞는 brandId를 고른다.
+
+    정확히 일치하는 브랜드명이 있으면 그걸 우선하고, 없으면 원본 브랜드명이 그
+    후보로 "시작하는"(접두어 일치) 경우도 인정한다 — ABC마트가 "에비수 셀렉트"처럼
+    브랜드명 뒤에 자체 라인/컬렉션명을 붙여서 표기하는데, 쿠팡 정식 브랜드명은
+    "에비수"처럼 앞부분만인 경우가 있기 때문이다(2026-09-22 실사용 중 발견, WING
+    카탈로그 검색으로 확인함). 완전 무관한 브랜드가 잘못 붙는 것만 막으면 되므로
+    접두어 일치까지는 안전하다고 본다. 못 찾으면 None.
+    """
+    data = search_response.get("data") if isinstance(search_response, dict) else search_response
+    candidates = data
+    if isinstance(data, dict):
+        candidates = data.get("items") or data.get("content") or data.get("brands") or [data]
+    if not isinstance(candidates, list):
+        return None
+
+    prefix_match: str | None = None
+    for item in candidates:
+        if not isinstance(item, dict):
+            continue
+        name = item.get("brandName") or item.get("name") or item.get("brand")
+        brand_id = item.get("brandId") or item.get("id")
+        if not name or brand_id is None:
+            continue
+        if name == original_brand_name:
+            return str(brand_id)
+        if prefix_match is None and original_brand_name.startswith(name):
+            prefix_match = str(brand_id)
+    return prefix_match
 
 
 async def resolve_notice_info(
