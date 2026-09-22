@@ -25,6 +25,7 @@ httpx = "^0.27.2"
 Pillow = "^11.0.0"
 Jinja2 = "^3.1.4"
 rembg = {version = "^2.0.84", extras = ["cpu"]}
+google-genai = "^1.15.0"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.3.3"

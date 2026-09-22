@@ -25,6 +25,8 @@ class Settings(BaseSettings):
     # 하나로 묶지 않고 따로 켜고 끌 수 있게 분리한다.
     use_mock_naver_price_checker: bool = True
     use_mock_coupang_price_checker: bool = True
+    # Gemini(LLM) 가공 — 키가 없거나 이 값이 true면 규칙 기반 Mock으로 동작한다.
+    use_mock_llm: bool = True
 
     # 오픈마켓 API 키
     naver_client_id: str = ""
@@ -72,6 +74,11 @@ class Settings(BaseSettings):
     # AI 연산 API
     replicate_api_token: str = ""
     fal_api_key: str = ""
+
+    # 구글 AI 스튜디오(Gemini) — 상품명 SEO 정제 / 스펙 요약용.
+    # https://aistudio.google.com/apikey 에서 발급.
+    gemini_api_key: str = ""
+    gemini_model: str = "gemini-3.8-flash"
 
 
 @lru_cache
