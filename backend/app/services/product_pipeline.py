@@ -33,10 +33,13 @@ from app.services.margin_engine import (
     round_up_to_price_unit,
 )
 
-# 쿠팡 카테고리 자동추천 API가 실패했을 때(예: 계정에 해당 API 권한이 없어 403) 쓰는
-# 폴백 값 — "운동화" 전시카테고리 예시 코드. 정확한 카테고리가 중요하면 고급 옵션에서
+# 쿠팡 카테고리 자동추천 API가 실패했을 때(예: 계정에 해당 API 권한이 없어 403), 또는
+# 자동추천 결과가 신발과 무관해 보일 때 쓰는 폴백 값.
+# 2026-09-22 실API로 검증됨: 52021은 고시정보 카테고리가 실제로 "구두/신발"로 조회되고
+# 등록까지 성공한다 (이전 값 56137은 실제로는 "화장품" 카테고리로 연결되는 잘못된 값이었다 —
+# 실사용 중 발견되어 교체함). 정확한 카테고리가 중요하면 고급 옵션에서
 # display_category_code를 직접 지정해야 한다.
-DEFAULT_DISPLAY_CATEGORY_CODE = 56137
+DEFAULT_DISPLAY_CATEGORY_CODE = 52021
 
 
 @dataclass

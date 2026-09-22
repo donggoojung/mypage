@@ -10,7 +10,7 @@ URL 1개만 처리하거나(단건), 여러 URL을 텍스트 파일로 넣어 �
     # 단건
     python scripts/e2e_full_pipeline.py <ABC마트 상품 상세 URL>
     python scripts/e2e_full_pipeline.py <URL> --headless
-    python scripts/e2e_full_pipeline.py <URL> --display-category-code 56137
+    python scripts/e2e_full_pipeline.py <URL> --display-category-code 52021
     python scripts/e2e_full_pipeline.py <URL> --request-approval   # (주의) 실계정+실API면 실제 승인요청까지 나감
 
     # 배치 (한 줄에 URL 하나씩 적은 텍스트 파일)
