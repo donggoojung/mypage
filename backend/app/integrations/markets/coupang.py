@@ -164,7 +164,10 @@ def build_seller_product_payload(data: CoupangProductInput, seller_info: dict) -
                     {"imageOrder": 1, "imageType": "DETAIL", "cdnPath": data.detail_image_url},
                 ],
                 "notices": notices,
-                "attributes": [*attributes_base, {"attributeTypeName": "사이즈", "attributeValueName": size}],
+                # 2026-09-22 실API 검증됨: 이 카테고리(신발)의 실제 필수 옵션 속성명은
+                # "사이즈"가 아니라 "신발사이즈"다 — 잘못된 이름을 쓰면 쿠팡이 모든
+                # 옵션을 구분 안 된 것으로 취급해 "중복 옵션값이 있습니다"로 거부한다.
+                "attributes": [*attributes_base, {"attributeTypeName": "신발사이즈", "attributeValueName": size}],
                 "contents": [
                     {
                         "contentsType": "HTML",
