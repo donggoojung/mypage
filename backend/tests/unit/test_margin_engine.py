@@ -4,10 +4,13 @@ import pytest
 
 from app.models.enums import MarketType
 from app.services.margin_engine import (
+    COUPANG_MINIMUM_FIXED_MARGIN,
+    COUPANG_OUTBOUND_SHIPPING_COST,
     MarginInputs,
     PLATFORM_DEFAULT_FEE_RATES,
     ReverseMarginError,
     calculate_actual_net_profit,
+    calculate_coupang_selling_price,
     calculate_selling_price,
     calculate_selling_price_for_platform,
     calculate_simple_markup_price,
@@ -145,3 +148,65 @@ def test_price_is_rounded_up_to_whole_won():
     price = calculate_selling_price(inputs)
 
     assert price == price.to_integral_value()  # 소수점 없는 정수 원 단위
+
+
+# --- 2026-09-22 사용자 확정 쿠팡 구간별 목표마진율 + 최소 고정마진 정책 -----------------
+
+
+def _net_profit_for_coupang(purchase_cost: Decimal, price: Decimal) -> Decimal:
+    inputs = MarginInputs(
+        purchase_cost=purchase_cost,
+        market_fee_rate=PLATFORM_DEFAULT_FEE_RATES[MarketType.COUPANG],
+        source_shipping_cost=COUPANG_OUTBOUND_SHIPPING_COST,
+    )
+    return calculate_actual_net_profit(price, inputs)
+
+
+@pytest.mark.parametrize(
+    "purchase_cost,expected_rate",
+    [
+        (Decimal("30000"), Decimal("0.30")),  # 5만원 이하
+        (Decimal("50000"), Decimal("0.30")),  # 경계값(이하 포함)
+        (Decimal("70000"), Decimal("0.25")),  # 5~9.9만원
+        (Decimal("99000"), Decimal("0.25")),  # 경계값
+        (Decimal("120000"), Decimal("0.20")),  # 10~15만원
+        (Decimal("150000"), Decimal("0.20")),  # 경계값
+        (Decimal("200000"), Decimal("0.15")),  # 15만원 초과
+    ],
+)
+def test_calculate_coupang_selling_price_uses_tiered_rate_when_above_fixed_floor(purchase_cost, expected_rate):
+    """매입원가가 커서 %마진만으로도 최소 고정마진(1만원)을 넘길 때는 구간별 목표마진율 가격이 채택되어야 한다."""
+    price = calculate_coupang_selling_price(purchase_cost)
+
+    expected_price = calculate_selling_price_for_platform(
+        market_type=MarketType.COUPANG,
+        purchase_cost=purchase_cost,
+        target_margin_rate=expected_rate,
+        source_shipping_cost=COUPANG_OUTBOUND_SHIPPING_COST,
+    )
+    assert price == expected_price
+
+
+def test_calculate_coupang_selling_price_fixed_floor_wins_for_cheap_item():
+    """매입원가가 낮으면(예: 1만원) %마진만으로는 실이익이 1만원에 못 미쳐, 최소 고정마진 가격이 채택되어야 한다."""
+    purchase_cost = Decimal("10000")
+    price = calculate_coupang_selling_price(purchase_cost)
+
+    net_profit = _net_profit_for_coupang(purchase_cost, price)
+    assert net_profit >= COUPANG_MINIMUM_FIXED_MARGIN
+    # 고정마진 플로어가 채택됐다면, 실이익은 플로어 금액에 근접해야 한다(원단위 올림 오차만 존재).
+    assert net_profit - COUPANG_MINIMUM_FIXED_MARGIN < Decimal("1")
+
+
+def test_calculate_coupang_selling_price_never_falls_below_minimum_fixed_margin():
+    """어떤 매입원가를 넣어도 실제 이익이 최소 고정마진(1만원) 밑으로 내려가면 안 된다(역마진 방지 핵심 보증)."""
+    for purchase_cost in [Decimal("1000"), Decimal("10000"), Decimal("49000"), Decimal("50001"), Decimal("500000")]:
+        price = calculate_coupang_selling_price(purchase_cost)
+        net_profit = _net_profit_for_coupang(purchase_cost, price)
+        assert net_profit >= COUPANG_MINIMUM_FIXED_MARGIN
+
+
+def test_calculate_coupang_selling_price_matches_confirmed_business_numbers():
+    """사용자가 확정한 실제 예시 수치(원가 1만원/4.9만원)로 결과값을 고정 검증한다."""
+    assert calculate_coupang_selling_price(Decimal("10000")) == Decimal("27236")
+    assert calculate_coupang_selling_price(Decimal("49000")) == Decimal("91191")

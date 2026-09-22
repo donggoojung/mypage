@@ -121,8 +121,8 @@
     <details>
       <summary>고급 옵션 (선택)</summary>
       <div class="options-grid">
-        <label>마크업 비율 (정가 대비)
-          <input id="opt-margin-rate" type="number" step="0.01" value="0.30">
+        <label>목표 마진율 (비워두면 매입원가 구간별 자동 적용: 5만원 이하 30%, 5~9.9만원 25%, 10~15만원 20%, 15만원 초과 15%, 최소 고정마진 1만원 보장)
+          <input id="opt-margin-rate" type="number" step="0.01" placeholder="자동(구간별 추천)">
         </label>
         <label>쿠팡 전시카테고리 코드 (비워두면 자동 추천)
           <input id="opt-category-code" type="number" placeholder="자동 추천">
@@ -206,9 +206,10 @@ async function runPipeline() {
     return;
   }
 
+  const marginRateInput = document.getElementById("opt-margin-rate").value.trim();
   const payload = {
     url,
-    target_margin_rate: parseFloat(document.getElementById("opt-margin-rate").value) || 0.30,
+    target_margin_rate: marginRateInput === "" ? null : parseFloat(marginRateInput),
     display_category_code: parseInt(document.getElementById("opt-category-code").value) || null,
     request_approval: document.getElementById("opt-request-approval").value === "true",
   };

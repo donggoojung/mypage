@@ -19,12 +19,16 @@ from app.integrations.markets.coupang import (
     register_product_for_master_product,
 )
 from app.integrations.scrapers.abc_mart import ABCMartScraper
-from app.models.enums import GenerationStatus, SourcePlatform
+from app.models.enums import GenerationStatus, MarketType, SourcePlatform
 from app.models.generated_asset import GeneratedAsset
 from app.models.master_product import MasterProduct
 from app.models.source_mapping import SourceMapping
 from app.services.asset_pipeline import generate_product_assets
-from app.services.margin_engine import calculate_simple_markup_price
+from app.services.margin_engine import (
+    COUPANG_OUTBOUND_SHIPPING_COST,
+    calculate_coupang_selling_price,
+    calculate_selling_price_for_platform,
+)
 
 # 쿠팡 카테고리 자동추천 API가 실패했을 때(예: 계정에 해당 API 권한이 없어 403) 쓰는
 # 폴백 값 — "운동화" 전시카테고리 예시 코드. 정확한 카테고리가 중요하면 고급 옵션에서
@@ -35,8 +39,11 @@ DEFAULT_DISPLAY_CATEGORY_CODE = 56137
 @dataclass
 class PipelineOptions:
     headless: bool = True
-    # 정가(크롤링된 표시가) 대비 단순 마크업 비율 — 판매가 = 원가 × (1 + target_margin_rate).
-    target_margin_rate: Decimal = Decimal("0.30")
+    # None(기본값)이면 사용자가 확정한 쿠팡 구간별 목표마진율 정책
+    # (calculate_coupang_selling_price)을 그대로 쓴다 — 매입원가 5만원 이하 30%,
+    # 5~9.9만원 25%, 10~15만원 20%, 15만원 초과 15%, 최소 고정마진 1만원 보장.
+    # 값을 직접 넣으면(고급 옵션) 그 마진율 하나로 전 구간에 강제 적용한다.
+    target_margin_rate: Decimal | None = None
     # None(기본값)이면 쿠팡 카테고리 자동추천 API로 상품명에 맞는 코드를 자동으로 찾는다.
     # 값을 직접 넣으면(사용자가 고급 옵션에 입력) 자동추천 없이 그 값을 그대로 쓴다.
     display_category_code: int | None = None
@@ -80,14 +87,26 @@ async def run_pipeline_for_url(url: str, options: PipelineOptions | None = None)
         f"품번={scraped.style_code}, 원가={scraped.price:,.0f}원"
     )
 
-    # --- [2/5] 판매가 계산: 정가 × (1 + 목표 마진율) 단순 마크업 ---
+    # --- [2/5] 판매가 계산: 역마진 방지 공식 (쿠팡 수수료 11.88% + 택배비 반영) ---
     print("[2/5] 판매가 계산 중...")
     purchase_cost = Decimal(str(scraped.price))
-    selling_price = calculate_simple_markup_price(purchase_cost, options.target_margin_rate)
-    print(
-        f"  원가(정가) {purchase_cost:,.0f}원 × (1+{options.target_margin_rate:.0%}) "
-        f"→ 쿠팡 판매가 {selling_price:,}원"
-    )
+    if options.target_margin_rate is not None:
+        selling_price = calculate_selling_price_for_platform(
+            market_type=MarketType.COUPANG,
+            purchase_cost=purchase_cost,
+            target_margin_rate=options.target_margin_rate,
+            source_shipping_cost=COUPANG_OUTBOUND_SHIPPING_COST,
+        )
+        print(
+            f"  원가(정가) {purchase_cost:,.0f}원, 수동 지정 목표마진율 {options.target_margin_rate:.0%} "
+            f"→ 쿠팡 판매가 {selling_price:,}원"
+        )
+    else:
+        selling_price = calculate_coupang_selling_price(purchase_cost)
+        print(
+            f"  원가(정가) {purchase_cost:,.0f}원, 구간별 자동 목표마진율(최소 고정마진 1만원 보장) "
+            f"→ 쿠팡 판매가 {selling_price:,}원"
+        )
 
     # --- [3/5] DB에 MasterProduct + SourceMapping upsert ---
     print("[3/5] DB에 상품 정보 저장 중...")

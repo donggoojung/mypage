@@ -112,6 +112,72 @@ def calculate_selling_price_for_platform(
     return calculate_selling_price(inputs)
 
 
+# --- 2026-09-22 사용자 확정 사업 규칙: 매입원가 구간별 목표마진율 + 최소 고정마진 -------
+# 매입원가가 낮을수록(재고소진/역마진 리스크가 더 크므로) 목표마진율을 더 높게 잡는 정책.
+# (임계값, 그 임계값 "이하"일 때 적용할 목표마진율) 순서로 낮은 구간부터 나열한다.
+COUPANG_MARGIN_TIERS: tuple[tuple[Decimal, Decimal], ...] = (
+    (Decimal("50000"), Decimal("0.30")),
+    (Decimal("99000"), Decimal("0.25")),
+    (Decimal("150000"), Decimal("0.20")),
+)
+# 위 구간 전부를 초과하는(15만원 초과) 매입원가에 적용할 목표마진율.
+COUPANG_MARGIN_RATE_ABOVE_TOP_TIER = Decimal("0.15")
+# 건당 실제 택배 배송비(무료배송으로 고객에게는 안 받지만, 판매자가 실제로 부담하는 비용).
+COUPANG_OUTBOUND_SHIPPING_COST = Decimal("4000")
+# %마진 계산 결과가 이보다 적게 남으면, 이 금액이 남도록 가격을 올린다.
+COUPANG_MINIMUM_FIXED_MARGIN = Decimal("10000")
+
+
+def _tiered_target_margin_rate(purchase_cost: Decimal, tiers: tuple[tuple[Decimal, Decimal], ...]) -> Decimal:
+    for threshold, rate in tiers:
+        if purchase_cost <= threshold:
+            return rate
+    return COUPANG_MARGIN_RATE_ABOVE_TOP_TIER
+
+
+def calculate_coupang_selling_price(
+    purchase_cost: Decimal,
+    market_fee_rate: Decimal = PLATFORM_DEFAULT_FEE_RATES[MarketType.COUPANG],
+    outbound_shipping_cost: Decimal = COUPANG_OUTBOUND_SHIPPING_COST,
+    minimum_fixed_margin: Decimal = COUPANG_MINIMUM_FIXED_MARGIN,
+    tiers: tuple[tuple[Decimal, Decimal], ...] = COUPANG_MARGIN_TIERS,
+) -> Decimal:
+    """사용자가 확정한 쿠팡 판매가 정책으로 판매가를 산출한다.
+
+    1) 매입원가 구간별 목표마진율(COUPANG_MARGIN_TIERS)로 계산한 가격과
+    2) "무조건 최소 고정마진(기본 1만원)은 남긴다"로 계산한 가격을 각각 구해서,
+    둘 중 더 높은 쪽을 최종가로 쓴다 — 싼 상품일수록 %마진만으로는 절대금액이
+    너무 적게 남을 수 있어(예: 원가 1만원×30%는 수수료/배송비 떼면 1만원도 안 남음),
+    이 경우 최소 고정마진 쪽이 자동으로 더 높게 나와 그쪽이 채택된다.
+    쿠팡 수수료(market_fee_rate)와 택배비(outbound_shipping_cost)는 두 계산 모두에
+    반영된다 — 둘 다 실제로 나가는 비용이라 마진 계산에서 빠지면 안 되기 때문이다.
+    """
+    target_rate = _tiered_target_margin_rate(purchase_cost, tiers)
+
+    price_by_rate = calculate_selling_price(
+        MarginInputs(
+            purchase_cost=purchase_cost,
+            market_fee_rate=market_fee_rate,
+            source_shipping_cost=outbound_shipping_cost,
+            target_margin_rate=target_rate,
+        )
+    )
+    price_by_fixed_floor = calculate_selling_price(
+        MarginInputs(
+            purchase_cost=purchase_cost,
+            market_fee_rate=market_fee_rate,
+            source_shipping_cost=outbound_shipping_cost,
+            fixed_margin=minimum_fixed_margin,
+            # MarginInputs.target_margin_rate 기본값(0.30)을 그대로 두면 "최소 고정마진"에
+            # 목표마진율까지 더해져 순수 플로어가 아니게 된다 — 여기선 0으로 명시해서
+            # 정말로 "고정마진 1만원만 무조건 보장"하는 가격만 계산한다.
+            target_margin_rate=Decimal("0"),
+        )
+    )
+
+    return max(price_by_rate, price_by_fixed_floor)
+
+
 def calculate_actual_net_profit(price: Decimal, inputs: MarginInputs) -> Decimal:
     """산출된 판매가로 실제 발생하는 순이익을 역산한다 (역마진 검증용).
 

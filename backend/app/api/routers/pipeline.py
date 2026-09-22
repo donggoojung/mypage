@@ -16,7 +16,9 @@ router = APIRouter(prefix="/api/pipeline", tags=["pipeline"])
 class PipelineRunRequest(BaseModel):
     url: str
     request_approval: bool = False
-    target_margin_rate: float = 0.30  # 정가 대비 마크업 비율 (판매가 = 원가 × (1+이 값))
+    # None(기본값)이면 구간별 자동 목표마진율 정책(calculate_coupang_selling_price)을 쓴다.
+    # 값을 넣으면 그 마진율 하나로 강제 적용한다(고급 옵션 수동 지정).
+    target_margin_rate: float | None = None
     # None(기본값)이면 쿠팡 카테고리 자동추천 API로 상품명에 맞는 코드를 자동으로 찾는다.
     display_category_code: int | None = None
     category: str = "운동화"
@@ -49,7 +51,7 @@ def refresh_all_pipeline() -> PipelineRunResponse:
 class PipelineRunBatchRequest(BaseModel):
     urls: list[str]
     request_approval: bool = False
-    target_margin_rate: float = 0.30
+    target_margin_rate: float | None = None
     display_category_code: int | None = None
     category: str = "운동화"
     color_tone: str = "neutral"

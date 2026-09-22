@@ -53,8 +53,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--target-margin-rate",
         type=Decimal,
-        default=Decimal("0.30"),
-        help="정가 대비 마크업 비율 — 판매가 = 원가(정가) × (1 + 이 값) (기본 0.30 = 30%%)",
+        default=None,
+        help=(
+            "목표 마진율을 이 값 하나로 강제 지정한다 (생략하면 매입원가 구간별 자동 정책 적용: "
+            "5만원 이하 30%%, 5~9.9만원 25%%, 10~15만원 20%%, 15만원 초과 15%%, 최소 고정마진 1만원 보장)"
+        ),
     )
     parser.add_argument(
         "--display-category-code",

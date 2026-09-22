@@ -12,14 +12,11 @@ from app.models.enums import MarketType, SourcePlatform
 from app.models.market_listing import MarketListing
 from app.models.master_product import MasterProduct
 from app.models.source_mapping import SourceMapping
-from app.services.margin_engine import calculate_simple_markup_price
+from app.services.margin_engine import calculate_coupang_selling_price
 
 # 매핑 시점에 저장해둔 source_url로 재조회한다 — 품번만으로 직접 조회하는 실API가
 # 아직 없는 소싱처(2차 지시 후속)라도, 이미 알고 있는 상세페이지 URL로는 재크롤링이 가능하다.
 _URL_REFRESHABLE_PLATFORMS = {SourcePlatform.ABC_MART}
-# product_pipeline.py의 등록 시 마크업률과 동일한 기본값 — 재고동기화로 가격을 다시
-# 계산할 때도 같은 정책을 써야 판매가가 등록 시점과 일관된다.
-_DEFAULT_MARKUP_RATE = Decimal("0.30")
 
 
 @celery_app.task(name="crawl_tasks.crawl_and_upsert_product")
@@ -102,7 +99,7 @@ def refresh_all_source_mappings() -> dict:
 
             old_size_stock = mapping.size_stock_json or {}
             new_size_stock = scraped.size_stock or {}
-            new_selling_price = calculate_simple_markup_price(Decimal(str(scraped.price)), _DEFAULT_MARKUP_RATE)
+            new_selling_price = calculate_coupang_selling_price(Decimal(str(scraped.price)))
 
             mapping.source_price = scraped.price
             mapping.size_stock_json = new_size_stock
