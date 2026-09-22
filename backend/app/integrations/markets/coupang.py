@@ -515,6 +515,13 @@ class CoupangWingClient:
     def _mock_search_brand_id(brand_name: str) -> tuple[str, str]:
         return f"MOCK-BRAND-{brand_name}", brand_name
 
+    # 2026-09-22 실사용 중 발견: 검색 결과가 10개씩만(countPerPage=10) 오는데
+    # totalCount는 더 많을 수 있다("루셰트"가 totalCount=19 중 뒷페이지에 있었음).
+    # 한 페이지만 보고 포기하면 실제로 등록된 브랜드도 놓친다 — 응답의 "page" 필드를
+    # 그대로 요청에도 쓸 수 있다고 보고(실API 미검증), 못 찾으면 다음 페이지를 마저
+    # 조회한다. 무한 조회를 막기 위해 최대 5페이지(최대 50개 후보)까지만 본다.
+    _BRAND_SEARCH_MAX_PAGES = 5
+
     async def _real_search_brand_id(self, query: str, original_brand_name: str) -> tuple[str, str] | None:
         headers = _build_authorization_header(
             method="POST",
@@ -522,13 +529,28 @@ class CoupangWingClient:
             access_key=self._settings.coupang_access_key,
             secret_key=self._settings.coupang_secret_key,
         )
-        payload = {"brandName": query}
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.post(f"{COUPANG_API_HOST}{BRAND_SEARCH_PATH}", headers=headers, json=payload)
-            response.raise_for_status()
-            body = response.json()
-        print(f"  [진단] 브랜드 검색 원본 응답(검색어={query!r}): {body}", flush=True)
-        return select_brand_id(body, original_brand_name)
+        fetched_count = 0
+        for page in range(1, self._BRAND_SEARCH_MAX_PAGES + 1):
+            payload = {"brandName": query, "page": page}
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.post(f"{COUPANG_API_HOST}{BRAND_SEARCH_PATH}", headers=headers, json=payload)
+                response.raise_for_status()
+                body = response.json()
+            print(f"  [진단] 브랜드 검색 원본 응답(검색어={query!r}, page={page}): {body}", flush=True)
+
+            result = select_brand_id(body, original_brand_name)
+            if result is not None:
+                return result
+
+            data = body.get("data") if isinstance(body, dict) else body
+            if not isinstance(data, dict):
+                break
+            items = data.get("items") or data.get("content") or data.get("brands") or []
+            fetched_count += len(items) if isinstance(items, list) else 0
+            total_count = data.get("totalCount")
+            if not items or not isinstance(total_count, int) or fetched_count >= total_count:
+                break  # 더 볼 페이지가 없다.
+        return None
 
     async def fetch_category_metadata(self, display_category_code: int) -> dict:
         """전시카테고리가 실제로 요구하는 상품정보제공고시/옵션 등의 메타정보를 조회한다.
