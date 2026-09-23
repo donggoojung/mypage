@@ -5,13 +5,39 @@
 <title>아디다스 슈퍼스타 - 무신사(테스트용 가상 픽스처, 실사이트 아님)</title>
 </head>
 <body>
-  <!-- 실사이트 미검증 — JSON-LD가 없을 때 DOM 셀렉터 폴백 로직만 검증하기 위한 가상 픽스처 -->
-  <div class="product-brand">아디다스</div>
-  <h1 class="product-title">아디다스 슈퍼스타 EG4958</h1>
-  <div class="price">99,000원</div>
-  <ul class="option-size">
-    <button type="button" class="option-size">240</button>
-    <button type="button" class="option-size" disabled>250</button>
-  </ul>
+  <!-- 실사이트 미검증 — JSON-LD가 없을 때 DOM 셀렉터 폴백 로직만 검증하기 위한 가상 픽스처.
+       2026-09-23 실제 PDP HTML로 확인된 클래스명 패턴(styled-components class*= 부분일치)과
+       "품번" dt/dd 구조, "사이즈" 닫힌 드롭다운 동작을 그대로 흉내낸다. -->
+  <div class="Brand__BrandName-sc-ae7cb4a7-2">
+    <span data-mds="Typography">아디다스</span>
+  </div>
+  <div class="GoodsName__Wrap-sc-789d282d-0">
+    <span data-mds="Typography">아디다스 슈퍼스타 EG4958</span>
+  </div>
+  <span class="Price__CalculatedPrice-sc-5aeb0d0b-16">99,000원</span>
+
+  <dl class="Layout__Wrap-sc-4b840b77-0">
+    <div class="Layout__Box-sc-4b840b77-1">
+      <dt data-mds="Typography">품번</dt>
+      <dd data-mds="Typography">EG4958-001</dd>
+    </div>
+    <div class="Layout__Box-sc-4b840b77-1">
+      <dt data-mds="Typography">성별</dt>
+      <dd data-mds="Typography">남</dd>
+    </div>
+  </dl>
+
+  <input type="text" readonly data-mds="DropdownTriggerInput" placeholder="사이즈" id="size-trigger">
+  <div id="size-list-container"></div>
+  <script>
+    document.getElementById('size-trigger').addEventListener('click', function () {
+      var container = document.getElementById('size-list-container');
+      container.innerHTML =
+        '<div class="option-size">' +
+        '<button type="button">240</button>' +
+        '<button type="button" disabled>250</button>' +
+        '</div>';
+    });
+  </script>
 </body>
 </html>

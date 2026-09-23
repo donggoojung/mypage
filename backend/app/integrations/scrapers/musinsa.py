@@ -40,11 +40,24 @@ SEARCH_URL_TEMPLATE = "https://www.musinsa.com/search/goods?keyword={query}"
 SELECTOR_JSON_LD = 'script[type="application/ld+json"]'
 # 2026-09-23 실사이트로 확인됨 — 상품 상세로 가는 링크는 항상 이 href 패턴을 쓴다.
 SELECTOR_PRODUCT_LINK = "a[href*='musinsa.com/products/']"
-# 아래 3개는 상품 "목록" 카드 기준으로 확인된 값(실사이트, 2026-09-23) — 상품
-# "상세" 페이지 자체의 구조는 아직 미확인이라 최선의 추정으로 남겨둔다.
-SELECTOR_BRAND = ".product-brand, .goods_brand"
-SELECTOR_PRODUCT_NAME = ".product-title, .goods_name, h1"
-SELECTOR_PRICE = ".price, .goods_price .txt-price"
+
+# 2026-09-23 실제 상품 상세 페이지(PDP) HTML로 확인됨 — 나이키/아식스 등 실제 상품마다
+# 실렸을 styled-components 해시(sc-xxxxx)가 조금씩 달라질 수 있어 class*= 부분일치로 잡는다.
+# 이 페이지에는 JSON-LD가 아예 없었다 — 그래서 실사이트에서는 아래 DOM 셀렉터가
+# 사실상 항상 쓰이고, JSON-LD 우선 로직은 폴백일 뿐이다(있으면 쓰고 없으면 여기로 옴).
+SELECTOR_BRAND = "[class*='Brand__BrandName'] span[data-mds='Typography']"
+SELECTOR_PRODUCT_NAME = "[class*='GoodsName__Wrap'] span[data-mds='Typography']"
+SELECTOR_PRICE = "[class*='Price__CalculatedPrice']"
+# 품번(스타일코드)은 "정보" 탭의 dt/dd 표에 명시적으로 나온다(dt 텍스트가 "품번").
+# 정규식으로 상품명에서 추출하는 것보다 훨씬 정확해서 이걸 최우선으로 쓴다.
+SELECTOR_SPEC_ROW = "[class*='Layout__Box-sc-4b840b77']"
+
+# 실사이트로 확인됨(2026-09-23) — 사이즈는 정적으로 나열된 버튼/리스트가 아니라
+# "사이즈"라는 placeholder를 가진 닫힌 드롭다운(input[readonly])이다. 옵션 목록은
+# 이 input을 클릭해서 드롭다운을 연 다음에야 DOM에 나타나는데, 아직 "열린 상태"의
+# HTML을 캡처하지 못해서 SELECTOR_SIZE_OPTIONS(열린 후 각 사이즈 항목의 셀렉터)는
+# 여전히 미확인이다. 기존에 "정적 버튼 리스트"로 가정했던 로직 자체가 틀렸었다.
+SELECTOR_SIZE_DROPDOWN_TRIGGER = "input[data-mds='DropdownTriggerInput'][placeholder='사이즈']"
 SELECTOR_SIZE_OPTIONS = ".size-option li, .option-size button, select[name='option'] option"
 
 
@@ -125,7 +138,12 @@ class MusinsaScraper(BaseScraper):
             price = self._parse_price(await self._safe_text(page, SELECTOR_PRICE))
             image_url = ""
 
-        style_code = self._extract_style_code(product_name) or self._extract_style_code(product_url) or ""
+        style_code = (
+            await self._extract_style_code_from_spec_table(page)
+            or self._extract_style_code(product_name)
+            or self._extract_style_code(product_url)
+            or ""
+        )
         size_stock = await self._extract_size_stock(page)
 
         return ScrapedProduct(
@@ -163,7 +181,20 @@ class MusinsaScraper(BaseScraper):
             return ""
 
     async def _extract_size_stock(self, page: Page) -> dict:
+        """실사이트로 확인됨(2026-09-23): 사이즈는 닫힌 드롭다운(input)이라 옵션이
+        DOM에 없다 — 먼저 클릭해서 열어야 한다. 다만 "열린 상태"의 실제 화면을
+        아직 캡처하지 못해서, 열고 난 뒤 옵션 항목을 읽는 SELECTOR_SIZE_OPTIONS는
+        여전히 최선의 추정이다. 실패해도(옵션을 못 찾아도) 나머지 파싱은 계속 진행되도록
+        빈 dict를 반환하고 조용히 넘어간다 — 이 부분만 재검증이 더 필요하다는 신호다.
+        """
         size_stock: dict[str, dict] = {}
+        try:
+            trigger = page.locator(SELECTOR_SIZE_DROPDOWN_TRIGGER)
+            if await trigger.count() > 0:
+                await trigger.first.click()
+                await page.wait_for_timeout(300)
+        except Exception:
+            pass
         try:
             options = page.locator(SELECTOR_SIZE_OPTIONS)
             count = await options.count()
@@ -184,6 +215,23 @@ class MusinsaScraper(BaseScraper):
         except Exception:
             pass
         return size_stock
+
+    async def _extract_style_code_from_spec_table(self, page: Page) -> str | None:
+        """실사이트로 확인됨(2026-09-23): "정보" 탭의 dt/dd 표에 품번이 명시적으로
+        나온다(dt 텍스트가 정확히 "품번"). 상품명에서 정규식으로 추출하는 것보다
+        훨씬 정확하므로 이걸 최우선으로 시도한다."""
+        try:
+            rows = page.locator(SELECTOR_SPEC_ROW)
+            count = await rows.count()
+            for i in range(count):
+                row = rows.nth(i)
+                label = (await row.locator("dt").first.text_content() or "").strip()
+                if label == "품번":
+                    value = (await row.locator("dd").first.text_content() or "").strip()
+                    return value or None
+        except Exception:
+            pass
+        return None
 
     @staticmethod
     def _extract_style_code(text: str) -> str | None:

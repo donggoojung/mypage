@@ -49,6 +49,11 @@ SEARCH_URL_TEMPLATE = "https://www.musinsa.com/search/goods?keyword={query}"
 # 2026-09-23 실사이트(musinsa.com 메인 추천 페이지) 실제 HTML로 확인됨 — 상품 상세
 # URL은 항상 이 href 패턴 하나뿐이다 (scrapers/musinsa.py의 SELECTOR_PRODUCT_LINK와 동일 근거).
 SELECTOR_PRODUCT_LINK = "a[href*='musinsa.com/products/']"
+# 실사이트로 확인됨(2026-09-23, scrapers/musinsa.py와 동일 근거): 사이즈는 정적 버튼
+# 목록이 아니라 "사이즈" placeholder를 가진 닫힌 드롭다운(input)이다 — 클릭해서 열어야
+# 옵션이 DOM에 나타난다. "열린 상태"의 실제 화면은 아직 캡처 전이라, 연 다음 각 사이즈
+# 항목을 읽는 SELECTOR_SIZE_OPTIONS는 여전히 최선의 추정이다.
+SELECTOR_SIZE_DROPDOWN_TRIGGER = "input[data-mds='DropdownTriggerInput'][placeholder='사이즈']"
 SELECTOR_SIZE_OPTIONS = ".size-option li, .option-size button, select[name='option'] option"
 BUY_NOW_BUTTON_TEXTS = ["바로 구매", "바로구매"]
 ADD_TO_CART_BUTTON_TEXTS = ["장바구니 담기", "장바구니"]
@@ -131,6 +136,10 @@ class MusinsaRPAClient(BaseRPAClient):
         await page.wait_for_selector(SELECTOR_PRODUCT_LINK, state="attached", timeout=10000)
         await page.locator(SELECTOR_PRODUCT_LINK).first.click()
         await page.wait_for_load_state("domcontentloaded")
+
+        dropdown_trigger = page.locator(SELECTOR_SIZE_DROPDOWN_TRIGGER)
+        if await dropdown_trigger.count() > 0:
+            await dropdown_trigger.first.click()
 
         await page.wait_for_selector(SELECTOR_SIZE_OPTIONS, state="attached", timeout=10000)
         size_options = page.locator(SELECTOR_SIZE_OPTIONS)

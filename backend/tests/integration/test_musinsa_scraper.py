@@ -42,9 +42,9 @@ async def test_falls_back_to_dom_selectors_when_no_json_ld():
 
     assert product.brand_name == "아디다스"
     assert "슈퍼스타" in product.product_name
-    # STYLE_CODE_PATTERN은 "EG4958-XX"처럼 대시+숫자 접미사가 있어야 매칭된다 — "EG4958"만
-    # 있으면 못 찾는 게 정상이라 abc_mart 스크래퍼 테스트와 동일하게 빈 문자열도 허용한다.
-    assert product.style_code in ("EG4958", "")
+    # 실사이트로 확인됨(2026-09-23): 품번은 "정보" 탭의 dt/dd 표에서 정확히 읽어온다
+    # (상품명에서 정규식으로 추출하는 것보다 정확함).
+    assert product.style_code == "EG4958-001"
     assert product.price == 99000.0
     assert product.size_stock["240"]["is_sold_out"] is False
     assert product.size_stock["250"]["is_sold_out"] is True
