@@ -44,9 +44,11 @@ COURIER_NAME_TO_CODE = {
 
 TYPING_DELAY_MS_RANGE = (100, 150)
 
-# 실사이트 미검증(최선의 추정) — 일반적인 한국 쇼핑몰 문구 기준.
+# 실사이트 미검증(최선의 추정) — 검색 URL 자체는 아직 확인 전.
 SEARCH_URL_TEMPLATE = "https://www.musinsa.com/search/goods?keyword={query}"
-SELECTOR_PRODUCT_LINK = "a[href*='/products/'], a[href*='/app/goods/']"
+# 2026-09-23 실사이트(musinsa.com 메인 추천 페이지) 실제 HTML로 확인됨 — 상품 상세
+# URL은 항상 이 href 패턴 하나뿐이다 (scrapers/musinsa.py의 SELECTOR_PRODUCT_LINK와 동일 근거).
+SELECTOR_PRODUCT_LINK = "a[href*='musinsa.com/products/']"
 SELECTOR_SIZE_OPTIONS = ".size-option li, .option-size button, select[name='option'] option"
 BUY_NOW_BUTTON_TEXTS = ["바로 구매", "바로구매"]
 ADD_TO_CART_BUTTON_TEXTS = ["장바구니 담기", "장바구니"]

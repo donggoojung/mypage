@@ -27,12 +27,21 @@ from app.integrations.scrapers.stealth import STEALTH_INIT_SCRIPT, chromium_laun
 
 STYLE_CODE_PATTERN = re.compile(r"\b[A-Z]{1,3}\d{3,6}-\d{2,5}\b")
 
-# 실사이트 미검증(최선의 추정) — 무신사 통합검색 URL. 실제로는 검색 결과가 상품/브랜드/
-# 기획전 등 여러 탭으로 나뉘어 있을 수 있어 확인이 필요하다.
+# 2026-09-23 실사이트(musinsa.com 메인 추천 페이지) 실제 HTML로 확인됨: 상품 상세
+# URL은 항상 이 패턴 하나뿐이다 — "/app/goods/..." 같은 옛날 패턴은 실제로 안 쓰인다.
+# 예: https://www.musinsa.com/products/6324162
+PRODUCT_URL_PATTERN = re.compile(r"https://www\.musinsa\.com/products/\d+")
+
+# 실사이트 미검증(최선의 추정) — 검색 URL 자체는 아직 확인 전. 검색 결과 페이지도
+# /products/{id} 링크를 쓸 가능성이 높지만(위 패턴과 동일한 컴포넌트일 것으로 추정),
+# 실제로 열어봐야 확실하다.
 SEARCH_URL_TEMPLATE = "https://www.musinsa.com/search/goods?keyword={query}"
 
 SELECTOR_JSON_LD = 'script[type="application/ld+json"]'
-SELECTOR_PRODUCT_LINK = "a[href*='/products/'], a[href*='/app/goods/']"
+# 2026-09-23 실사이트로 확인됨 — 상품 상세로 가는 링크는 항상 이 href 패턴을 쓴다.
+SELECTOR_PRODUCT_LINK = "a[href*='musinsa.com/products/']"
+# 아래 3개는 상품 "목록" 카드 기준으로 확인된 값(실사이트, 2026-09-23) — 상품
+# "상세" 페이지 자체의 구조는 아직 미확인이라 최선의 추정으로 남겨둔다.
 SELECTOR_BRAND = ".product-brand, .goods_brand"
 SELECTOR_PRODUCT_NAME = ".product-title, .goods_name, h1"
 SELECTOR_PRICE = ".price, .goods_price .txt-price"
@@ -64,8 +73,14 @@ class MusinsaScraper(BaseScraper):
                 product_url = await page.locator(SELECTOR_PRODUCT_LINK).first.get_attribute("href")
                 if not product_url:
                     raise RuntimeError(f"무신사 검색 결과에서 '{style_code}' 상품 링크를 찾지 못했습니다 (셀렉터 재검증 필요).")
-                if product_url.startswith("/"):
-                    product_url = f"https://www.musinsa.com{product_url}"
+                # 실사이트로 확인됨(2026-09-23): 상품 카드의 href는 항상 절대 URL이라
+                # 상대경로 보정은 필요 없다 — 다만 구조가 바뀌었을 가능성을 대비해 패턴을
+                # 한 번 더 검증한다.
+                if not PRODUCT_URL_PATTERN.match(product_url):
+                    raise RuntimeError(
+                        f"찾은 링크({product_url})가 예상한 상품 URL 패턴과 다릅니다 — "
+                        "검색 결과 화면 구조가 바뀌었을 수 있어 재검증이 필요합니다."
+                    )
 
                 return await self._fetch_by_url_in_page(page, product_url)
             finally:
