@@ -55,6 +55,12 @@ SELECTOR_PRODUCT_LINK = "a[href*='musinsa.com/products/']"
 # 항목을 읽는 SELECTOR_SIZE_OPTIONS는 여전히 최선의 추정이다.
 SELECTOR_SIZE_DROPDOWN_TRIGGER = "input[data-mds='DropdownTriggerInput'][placeholder='사이즈']"
 SELECTOR_SIZE_OPTIONS = ".size-option li, .option-size button, select[name='option'] option"
+# 실사이트로 확인됨(2026-09-23): 사이즈를 고르면(드롭다운이 열린 상태에서 항목 클릭) 그
+# 선택 결과가 드롭다운 아래에 "선택된 옵션" 카드로 나타난다(수량/가격 포함). 이 카드의
+# 텍스트로 "정말 원하는 사이즈가 선택됐는지"를 클릭 직후 검증할 수 있다 — 예전에는
+# 클릭만 하고 결과를 확인하지 않아서 셀렉터가 틀려도 조용히 다음 단계로 넘어가는
+# 문제가 있었다.
+SELECTOR_SELECTED_OPTION_NAME = "[class*='SelectedOptionItem__OptionNameTypography']"
 BUY_NOW_BUTTON_TEXTS = ["바로 구매", "바로구매"]
 ADD_TO_CART_BUTTON_TEXTS = ["장바구니 담기", "장바구니"]
 CHECKOUT_BUTTON_TEXTS = ["주문하기", "구매하기", "선택상품 주문"]
@@ -148,6 +154,20 @@ class MusinsaRPAClient(BaseRPAClient):
         if count == 0:
             raise RPAPurchaseError(f"사이즈 '{size}' 버튼을 찾지 못했습니다 (품절이거나 선택자가 바뀌었을 수 있음).")
         await size_button.first.click()
+
+        # 실사이트로 확인됨(2026-09-23) — 클릭 직후 "선택된 옵션" 카드에 실제로 원하는
+        # 사이즈가 떴는지 확인한다. 여기서 확인이 안 되면 셀렉터가 바뀌었거나 잘못된
+        # 사이즈가 선택된 것이므로, 결제까지 진행하지 않고 바로 실패시킨다.
+        try:
+            await page.wait_for_selector(SELECTOR_SELECTED_OPTION_NAME, state="attached", timeout=5000)
+            selected_labels = await page.locator(SELECTOR_SELECTED_OPTION_NAME).all_text_contents()
+        except Exception:
+            selected_labels = []
+        if not any(label.strip() == size for label in selected_labels):
+            raise RPAPurchaseError(
+                f"사이즈 '{size}'를 클릭했지만 선택된 옵션 카드에서 확인되지 않았습니다 "
+                f"(확인된 선택값: {selected_labels!r}) — 화면 구조가 바뀌었을 수 있어 재검증이 필요합니다."
+            )
 
         for label in BUY_NOW_BUTTON_TEXTS:
             button = page.get_by_role("button", name=re.compile(re.escape(label))).or_(
