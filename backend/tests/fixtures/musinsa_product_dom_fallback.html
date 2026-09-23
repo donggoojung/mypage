@@ -7,7 +7,7 @@
 <body>
   <!-- 실사이트 미검증 — JSON-LD가 없을 때 DOM 셀렉터 폴백 로직만 검증하기 위한 가상 픽스처.
        2026-09-23 실제 PDP HTML로 확인된 클래스명 패턴(styled-components class*= 부분일치)과
-       "품번" dt/dd 구조, "사이즈" 닫힌 드롭다운 동작을 그대로 흉내낸다. -->
+       "품번" dt/dd 구조, "사이즈" 닫힌 드롭다운의 열린 상태 구조를 그대로 흉내낸다. -->
   <div class="Brand__BrandName-sc-ae7cb4a7-2">
     <span data-mds="Typography">아디다스</span>
   </div>
@@ -33,10 +33,9 @@
     document.getElementById('size-trigger').addEventListener('click', function () {
       var container = document.getElementById('size-list-container');
       container.innerHTML =
-        '<div class="option-size">' +
-        '<button type="button">240</button>' +
-        '<button type="button" disabled>250</button>' +
-        '</div>';
+        '<div data-mds="StaticDropdownMenuItem"><div class="DropdownItemContent__ContentColumn">240<div>09.28(월) 도착보장</div></div>' +
+        '<div class="BackFillItemContent__RemainQuantityWrap"><span>4개 남음</span></div></div>' +
+        '<div data-mds="StaticDropdownMenuItem"><div class="DropdownItemContent__ContentColumn">250 (품절)</div></div>';
     });
   </script>
 </body>

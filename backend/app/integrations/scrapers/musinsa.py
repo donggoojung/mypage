@@ -1,9 +1,11 @@
-"""무신사 상품 상세페이지 크롤러 스켈레톤 (실사이트 미검증).
+"""무신사 상품 상세페이지 크롤러 (2026-09-23 실 상품 상세 페이지 HTML로 검증됨).
 
 abc_mart.py와 같은 순서로 짰다 — 품번(또는 상품명)으로 검색해 첫 결과의 상세
 페이지로 들어가, JSON-LD 구조화 데이터를 우선 시도하고 없으면 DOM 셀렉터로
-폴백해서 가격/사이즈별 재고를 읽는다. 다만 URL 패턴과 SELECTOR_*는 전부 아직
-실제 무신사 화면(F12)으로 확인 전인 "최선의 추정"이다.
+폴백해서 가격/품번/사이즈별 재고를 읽는다. 상품 상세 페이지의 가격/브랜드/
+상품명/품번/사이즈-재고 SELECTOR_*는 실제 캡처한 HTML(가격 229,000원, 품번
+1011C256-001, 사이즈 드롭다운 열린 상태 포함)로 확인됨. 다만 검색 결과 페이지
+자체(SEARCH_URL_TEMPLATE)는 아직 실제로 열어보지 못해 최선의 추정으로 남아있다.
 
 실제로 쓰기 전에 반드시:
   1. 실제 상품에 SourceMapping(source_platform=MUSINSA)을 등록하지 않는 한, 이
@@ -11,7 +13,8 @@ abc_mart.py와 같은 순서로 짰다 — 품번(또는 상품명)으로 검색
      않는다(=안전, 실제 주문 처리에 영향 없음).
   2. scripts/test_scraper_margin.py 같은 진단 스크립트로 실제 무신사 상품 URL을
      넣어 결과를 확인하고, 비거나 틀리면 SELECTOR_*/URL 패턴을 실제 화면 기준으로
-     고쳐야 한다 (abc_mart.py 검증 때와 동일한 절차).
+     고쳐야 한다 (abc_mart.py 검증 때와 동일한 절차) — 특히 검색 URL/검색결과
+     페이지는 아직 이 검증을 못 거쳤다.
 """
 
 import asyncio
@@ -53,12 +56,24 @@ SELECTOR_PRICE = "[class*='Price__CalculatedPrice']"
 SELECTOR_SPEC_ROW = "[class*='Layout__Box-sc-4b840b77']"
 
 # 실사이트로 확인됨(2026-09-23) — 사이즈는 정적으로 나열된 버튼/리스트가 아니라
-# "사이즈"라는 placeholder를 가진 닫힌 드롭다운(input[readonly])이다. 옵션 목록은
-# 이 input을 클릭해서 드롭다운을 연 다음에야 DOM에 나타나는데, 아직 "열린 상태"의
-# HTML을 캡처하지 못해서 SELECTOR_SIZE_OPTIONS(열린 후 각 사이즈 항목의 셀렉터)는
-# 여전히 미확인이다. 기존에 "정적 버튼 리스트"로 가정했던 로직 자체가 틀렸었다.
+# "사이즈"라는 placeholder를 가진 닫힌 드롭다운(input[readonly])이다. 이 input을
+# 클릭해서 열어야 옵션들이 DOM에 나타난다. 열린 상태의 실제 HTML로 아래 구조까지
+# 전부 확인됨:
+#   - 옵션 하나 = data-mds="StaticDropdownMenuItem"
+#   - 품절: 텍스트가 "230 (품절)" 형태, 글자색 회색(text-gray-400)
+#   - 구매가능: 텍스트가 "260"(사이즈만), 글자색 검정(text-black), 그리고 형제
+#     요소로 BackFillItemContent__RemainQuantityWrap 안에 "3개 남음"처럼
+#     정확한 남은 수량이 표시된다.
 SELECTOR_SIZE_DROPDOWN_TRIGGER = "input[data-mds='DropdownTriggerInput'][placeholder='사이즈']"
-SELECTOR_SIZE_OPTIONS = ".size-option li, .option-size button, select[name='option'] option"
+SELECTOR_SIZE_OPTIONS = "[data-mds='StaticDropdownMenuItem']"
+SELECTOR_SIZE_REMAIN_QUANTITY = "[class*='BackFillItemContent__RemainQuantityWrap']"
+# 실사이트로 확인됨(2026-09-23): 구매가능 항목은 사이즈 숫자 바로 뒤에 배송안내용
+# 중첩 div가 붙어있는데, 그 사이에 공백이 없어서(예: "260<div>09.28...") 전체
+# text_content()를 합치면 "26009"처럼 숫자가 이어붙어 버린다. 그래서 사이즈 숫자만
+# 있는 첫 텍스트 노드를 따로 읽어야 한다.
+SELECTOR_SIZE_CONTENT_COLUMN = "[class*='DropdownItemContent__ContentColumn']"
+SIZE_LABEL_PATTERN = re.compile(r"^\s*(\d+)")
+REMAIN_QUANTITY_PATTERN = re.compile(r"\d+")
 
 
 class MusinsaScraper(BaseScraper):
@@ -181,18 +196,16 @@ class MusinsaScraper(BaseScraper):
             return ""
 
     async def _extract_size_stock(self, page: Page) -> dict:
-        """실사이트로 확인됨(2026-09-23): 사이즈는 닫힌 드롭다운(input)이라 옵션이
-        DOM에 없다 — 먼저 클릭해서 열어야 한다. 다만 "열린 상태"의 실제 화면을
-        아직 캡처하지 못해서, 열고 난 뒤 옵션 항목을 읽는 SELECTOR_SIZE_OPTIONS는
-        여전히 최선의 추정이다. 실패해도(옵션을 못 찾아도) 나머지 파싱은 계속 진행되도록
-        빈 dict를 반환하고 조용히 넘어간다 — 이 부분만 재검증이 더 필요하다는 신호다.
-        """
+        """실사이트로 확인됨(2026-09-23): 사이즈 드롭다운(닫힌 input)을 클릭해서 열면
+        각 옵션이 "230 (품절)"(품절) 또는 "260" + 형제 요소의 "3개 남음"(구매가능,
+        정확한 재고 수량 포함) 형태로 나온다. 품절 항목은 stock=0, 구매가능 항목은
+        실제 남은 수량을 stock에 담는다."""
         size_stock: dict[str, dict] = {}
         try:
             trigger = page.locator(SELECTOR_SIZE_DROPDOWN_TRIGGER)
             if await trigger.count() > 0:
                 await trigger.first.click()
-                await page.wait_for_timeout(300)
+                await page.wait_for_selector(SELECTOR_SIZE_OPTIONS, state="attached", timeout=5000)
         except Exception:
             pass
         try:
@@ -200,18 +213,33 @@ class MusinsaScraper(BaseScraper):
             count = await options.count()
             for i in range(count):
                 option = options.nth(i)
-                label = (await option.text_content() or "").strip()
-                if not label:
+                full_text = (await option.text_content() or "").strip()
+                if not full_text:
                     continue
-                class_attr = (await option.get_attribute("class")) or ""
-                disabled_attr = await option.get_attribute("disabled")
-                is_sold_out = (
-                    disabled_attr is not None
-                    or "disabled" in class_attr
-                    or "soldout" in class_attr.lower()
-                    or "품절" in label
-                )
-                size_stock[label] = {"stock": 0 if is_sold_out else None, "is_sold_out": is_sold_out}
+                is_sold_out = "품절" in full_text
+
+                content_column = option.locator(SELECTOR_SIZE_CONTENT_COLUMN)
+                if await content_column.count() > 0:
+                    raw_label = await content_column.first.evaluate(
+                        "el => (el.childNodes[0] && el.childNodes[0].nodeType === 3) "
+                        "? el.childNodes[0].textContent : el.textContent"
+                    )
+                else:
+                    raw_label = full_text
+
+                label_match = SIZE_LABEL_PATTERN.match((raw_label or "").strip())
+                if not label_match:
+                    continue
+                label = label_match.group(1)
+                stock = 0
+                if not is_sold_out:
+                    remain = option.locator(SELECTOR_SIZE_REMAIN_QUANTITY)
+                    if await remain.count() > 0:
+                        remain_text = await remain.first.text_content() or ""
+                        remain_match = REMAIN_QUANTITY_PATTERN.search(remain_text)
+                        if remain_match:
+                            stock = int(remain_match.group())
+                size_stock[label] = {"stock": stock, "is_sold_out": is_sold_out}
         except Exception:
             pass
         return size_stock

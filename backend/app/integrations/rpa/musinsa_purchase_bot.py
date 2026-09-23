@@ -54,7 +54,16 @@ SELECTOR_PRODUCT_LINK = "a[href*='musinsa.com/products/']"
 # 옵션이 DOM에 나타난다. "열린 상태"의 실제 화면은 아직 캡처 전이라, 연 다음 각 사이즈
 # 항목을 읽는 SELECTOR_SIZE_OPTIONS는 여전히 최선의 추정이다.
 SELECTOR_SIZE_DROPDOWN_TRIGGER = "input[data-mds='DropdownTriggerInput'][placeholder='사이즈']"
-SELECTOR_SIZE_OPTIONS = ".size-option li, .option-size button, select[name='option'] option"
+# 실사이트로 확인됨(2026-09-23, scrapers/musinsa.py와 동일 근거) — 드롭다운을 열면
+# 각 항목이 "230 (품절)" 또는 "260"(+형제 요소에 "N개 남음") 형태로 나온다.
+SELECTOR_SIZE_OPTIONS = "[data-mds='StaticDropdownMenuItem']"
+# 실사이트로 확인됨(2026-09-23, scrapers/musinsa.py와 동일 근거): 구매가능 항목은
+# 사이즈 숫자 바로 뒤에 배송안내용 중첩 div가 공백 없이 붙어있어서(예:
+# "260<div>09.28...") 항목 전체 text_content()를 그대로 쓰면 "26009"처럼 숫자가
+# 이어붙어 버린다 — 그래서 사이즈 숫자만 있는 이 안쪽 요소의 첫 텍스트 노드로
+# 정확한 라벨을 따로 읽어야 한다.
+SELECTOR_SIZE_CONTENT_COLUMN = "[class*='DropdownItemContent__ContentColumn']"
+SIZE_LABEL_PATTERN = re.compile(r"^\s*(\d+)")
 # 실사이트로 확인됨(2026-09-23): 사이즈를 고르면(드롭다운이 열린 상태에서 항목 클릭) 그
 # 선택 결과가 드롭다운 아래에 "선택된 옵션" 카드로 나타난다(수량/가격 포함). 이 카드의
 # 텍스트로 "정말 원하는 사이즈가 선택됐는지"를 클릭 직후 검증할 수 있다 — 예전에는
@@ -149,11 +158,31 @@ class MusinsaRPAClient(BaseRPAClient):
 
         await page.wait_for_selector(SELECTOR_SIZE_OPTIONS, state="attached", timeout=10000)
         size_options = page.locator(SELECTOR_SIZE_OPTIONS)
-        size_button = size_options.filter(has_text=re.compile(rf"^\s*{re.escape(size)}\s*$"))
-        count = await size_button.count()
-        if count == 0:
-            raise RPAPurchaseError(f"사이즈 '{size}' 버튼을 찾지 못했습니다 (품절이거나 선택자가 바뀌었을 수 있음).")
-        await size_button.first.click()
+        matched_option = None
+        matched_is_sold_out = False
+        for i in range(await size_options.count()):
+            option = size_options.nth(i)
+            full_text = (await option.text_content() or "").strip()
+            if not full_text:
+                continue
+            content_column = option.locator(SELECTOR_SIZE_CONTENT_COLUMN)
+            if await content_column.count() > 0:
+                raw_label = await content_column.first.evaluate(
+                    "el => (el.childNodes[0] && el.childNodes[0].nodeType === 3) "
+                    "? el.childNodes[0].textContent : el.textContent"
+                )
+            else:
+                raw_label = full_text
+            label_match = SIZE_LABEL_PATTERN.match((raw_label or "").strip())
+            if label_match and label_match.group(1) == size:
+                matched_option = option
+                matched_is_sold_out = "품절" in full_text
+                break
+        if matched_option is None:
+            raise RPAPurchaseError(f"사이즈 '{size}' 버튼을 찾지 못했습니다 (선택자가 바뀌었을 수 있음).")
+        if matched_is_sold_out:
+            raise RPAPurchaseError(f"사이즈 '{size}'는 현재 품절입니다 — 무인구매를 진행할 수 없습니다.")
+        await matched_option.click()
 
         # 실사이트로 확인됨(2026-09-23) — 클릭 직후 "선택된 옵션" 카드에 실제로 원하는
         # 사이즈가 떴는지 확인한다. 여기서 확인이 안 되면 셀렉터가 바뀌었거나 잘못된

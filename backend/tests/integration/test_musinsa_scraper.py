@@ -1,8 +1,9 @@
-"""MusinsaScraper 파싱 로직 검증 (실사이트 미검증 스켈레톤).
+"""MusinsaScraper 파싱 로직 검증 (2026-09-23 실 상품 상세 페이지 HTML로 검증됨).
 
 abc_mart 스크래퍼 테스트와 동일한 방식 — 실제 musinsa.com 대신 로컬 가상 HTML
-픽스처로 JSON-LD/DOM 파싱 "로직"만 검증한다. SELECTOR_* 값이 실제 무신사 화면과
-일치하는지는 이 테스트로 전혀 보장되지 않으며, 실사이트 검증은 별도로 필요하다.
+픽스처로 JSON-LD/DOM 파싱 "로직"만 검증한다. 픽스처는 실제로 캡처한 PDP 구조
+(styled-components class*= 패턴, 품번 dt/dd 표, 사이즈 드롭다운이 열렸을 때의
+품절/재고수량 표시)를 최대한 그대로 흉내낸다.
 """
 
 from pathlib import Path
@@ -28,9 +29,11 @@ async def test_parses_json_ld_product_data():
     assert product.brand_name == "나이키"
     assert product.style_code == "CW2288-111"
     assert product.price == 139000.0
-    assert product.size_stock["250"]["is_sold_out"] is False
-    assert product.size_stock["260"]["is_sold_out"] is True
-    assert product.size_stock["270"]["is_sold_out"] is False
+    # 실사이트로 확인됨(2026-09-23): 품절 항목은 stock=0, 구매가능 항목은
+    # "N개 남음"에서 읽은 정확한 재고 수량이 담긴다.
+    assert product.size_stock["250"] == {"stock": 5, "is_sold_out": False}
+    assert product.size_stock["260"] == {"stock": 0, "is_sold_out": True}
+    assert product.size_stock["270"] == {"stock": 2, "is_sold_out": False}
 
 
 @pytest.mark.asyncio
@@ -46,5 +49,5 @@ async def test_falls_back_to_dom_selectors_when_no_json_ld():
     # (상품명에서 정규식으로 추출하는 것보다 정확함).
     assert product.style_code == "EG4958-001"
     assert product.price == 99000.0
-    assert product.size_stock["240"]["is_sold_out"] is False
-    assert product.size_stock["250"]["is_sold_out"] is True
+    assert product.size_stock["240"] == {"stock": 4, "is_sold_out": False}
+    assert product.size_stock["250"] == {"stock": 0, "is_sold_out": True}
