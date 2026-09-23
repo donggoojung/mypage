@@ -43,6 +43,9 @@ class OrderStatus(str, enum.Enum):
 
     RECEIVED = "received"
     SOURCING_IN_PROGRESS = "sourcing_in_progress"
+    # 30분 재고 동기화 주기 사이의 순간 품절/발주 실패 등 사람이 확인해야 하는 상황 —
+    # 자동 재시도하지 않고 여기서 멈춰서 관리자 텔레그램 알림과 함께 대기한다.
+    HOLD = "hold"
     ORDER_PURCHASED = "order_purchased"
     SHIPPED = "shipped"
     DELIVERED = "delivered"

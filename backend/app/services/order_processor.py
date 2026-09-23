@@ -3,6 +3,7 @@
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
+from app.integrations.messaging.telegram_admin import TelegramAdminNotifier
 from app.integrations.rpa.base import ShippingInfo
 from app.integrations.rpa.factory import get_rpa_client
 from app.integrations.rpa.purchase_bot import REVIEW_ONLY_PREFIX
@@ -55,9 +56,13 @@ async def process_new_order(session: Session, order_id: int, use_mock: bool | No
                 f"RPA가 최종 결제 직전 단계까지만 진행했습니다({source_order_id}) — "
                 ".env의 RPA_CONFIRM_FINAL_PAYMENT=true로 바꾸기 전에는 실제 구매가 완료되지 않습니다."
             )
-    except Exception:
-        order.status = OrderStatus.RECEIVED  # 실패 시 다음 폴링에서 재시도할 수 있게 원상 복구.
+    except Exception as exc:
+        # 30분 재고 동기화 주기 사이의 순간 품절/발주 실패 보완: 조용히 실패만 반복하지
+        # 않도록 '보류(HOLD)'로 명확히 멈추고, 관리자에게 즉시 텔레그램으로 알린다 —
+        # 사람이 확인(대체 소싱처 수동 처리, 고객 취소/환불 등)하기 전에는 자동 재시도하지 않는다.
+        order.status = OrderStatus.HOLD
         session.commit()
+        await _notify_admin_of_hold(order, product, exc, use_mock)
         raise
 
     fulfillment = OrderFulfillment(
@@ -71,3 +76,21 @@ async def process_new_order(session: Session, order_id: int, use_mock: bool | No
     session.commit()
 
     return fulfillment
+
+
+async def _notify_admin_of_hold(
+    order: CustomerOrder, product: MasterProduct, exc: Exception, use_mock: bool | None
+) -> None:
+    """부가 기능(관리자 알림)이 실패해도 주문을 HOLD로 멈춘 결과 자체는 되돌리지 않는다."""
+    try:
+        notifier = TelegramAdminNotifier(use_mock=use_mock)
+        text = (
+            "[보탬] 주문 매입 보류(HOLD) 발생\n"
+            f"쿠팡 주문번호: {order.market_order_id}\n"
+            f"상품: {product.product_name} / 사이즈 {order.ordered_size} / 수량 {order.quantity}\n"
+            f"사유: {exc}\n"
+            "대시보드에서 확인 후 대체 소싱처 수동 처리 또는 고객 취소/환불을 진행해주세요."
+        )
+        await notifier.send_alert(text)
+    except Exception as notify_exc:  # noqa: BLE001 - 알림 발송 실패가 HOLD 전환 자체를 실패로 만들면 안 된다.
+        print(f"  관리자 텔레그램 알림 발송 실패({notify_exc}) — 주문 상태(HOLD)는 그대로 유지합니다.", flush=True)

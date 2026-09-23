@@ -79,6 +79,11 @@ class Settings(BaseSettings):
     # 비워두면(기본값) 알림톡 대신 문자(SMS)로만 발송한다.
     solapi_shipping_template_id: str = ""
 
+    # 텔레그램 관리자 긴급 알림 (재고 품절/발주 실패 등 HOLD 상태 발생 시)
+    use_mock_telegram: bool = True
+    telegram_bot_token: str = ""
+    telegram_admin_chat_id: str = ""
+
     # AI 연산 API
     replicate_api_token: str = ""
     fal_api_key: str = ""

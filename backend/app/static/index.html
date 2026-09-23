@@ -100,6 +100,7 @@
   .badge.active { background: #dcfce7; color: #15803d; }
   .badge.draft { background: #fef3c7; color: #92400e; }
   .badge.other { background: #e5e7eb; color: #374151; }
+  .badge.danger { background: #fee2e2; color: #dc2626; }
   .empty { color: var(--muted); font-size: 13px; padding: 12px 0; }
   .card-header-row { display: flex; justify-content: space-between; align-items: center; }
 </style>
@@ -182,13 +183,14 @@
 <script>
 const STATUS_LABELS = {
   active: "판매중", draft: "임시저장", sold_out: "품절", suspended: "판매중지",
-  received: "주문접수", sourcing_in_progress: "소싱중", order_purchased: "매입완료",
+  received: "주문접수", sourcing_in_progress: "소싱중", hold: "보류(확인필요)", order_purchased: "매입완료",
   shipped: "배송중", delivered: "배송완료", cancelled: "취소", refunded: "환불",
 };
 
 function badgeClass(status) {
   if (status === "active") return "active";
   if (status === "draft") return "draft";
+  if (status === "hold") return "danger";
   return "other";
 }
 

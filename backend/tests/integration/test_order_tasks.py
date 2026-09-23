@@ -93,7 +93,7 @@ def test_process_order_creates_fulfillment_and_marks_purchased(received_order_wi
     assert fulfillment.source_platform == SourcePlatform.ABC_MART
 
 
-def test_process_order_reverts_to_received_when_no_source_available(matching_product, db_session):
+def test_process_order_holds_when_no_source_available(matching_product, db_session):
     # SourceMapping을 하나도 만들지 않아 최저가 판별이 실패하는 상황을 재현한다.
     order = CustomerOrder(
         market_type=MarketType.COUPANG,
@@ -113,4 +113,4 @@ def test_process_order_reverts_to_received_when_no_source_available(matching_pro
         order_tasks.process_order(order.order_id, use_mock=True)
 
     db_session.refresh(order)
-    assert order.status == OrderStatus.RECEIVED
+    assert order.status == OrderStatus.HOLD
