@@ -8,6 +8,7 @@ from app.models.customer_order import CustomerOrder
 from app.models.enums import MarketType
 from app.models.master_product import MasterProduct
 from app.services.order_processor import process_new_order
+from app.services.shipment_service import ShipmentNotReadyError, confirm_shipment_for_order
 
 
 @celery_app.task(name="order_tasks.detect_new_orders")
@@ -50,6 +51,9 @@ def detect_new_orders(use_mock: bool | None = None) -> dict:
                     recipient_phone=receiver.get("safeNumber") or receiver.get("phone", ""),
                     shipping_addr=f"{receiver.get('addr1', '')} {receiver.get('addr2', '')}".strip(),
                     paid_amount=item.get("salesPrice", 0),
+                    # PRD 6.1 발송처리 때 쿠팡 송장업로드 API에 그대로 넘겨야 하는 식별자.
+                    market_shipment_box_id=str(item["shipmentBoxId"]) if item.get("shipmentBoxId") else None,
+                    market_vendor_item_id=str(item["vendorItemId"]) if item.get("vendorItemId") else None,
                 )
                 session.add(order)
                 created_order_ids.append(market_order_id)
@@ -69,4 +73,25 @@ def process_order(order_id: int, use_mock: bool | None = None) -> dict:
             "source_platform": fulfillment.source_platform.value,
             "source_order_id": fulfillment.source_order_id,
             "cost_paid": fulfillment.cost_paid,
+        }
+
+
+@celery_app.task(name="order_tasks.confirm_shipment")
+def confirm_shipment(order_id: int, use_mock: bool | None = None) -> dict:
+    """PRD 6.1: 매입 완료된 주문의 운송장을 조회해 쿠팡에 발송처리하고 SHIPPED로 전환한다.
+
+    소싱처가 아직 발송 준비 중이면(운송장 미발급) 에러 없이 "아직 준비중"으로 표시하고
+    끝낸다 — 다음 주기 폴링에서 다시 시도하면 된다(ShipmentNotReadyError는 정상적인
+    "재시도 필요" 신호이지 실패가 아니다).
+    """
+    with SessionLocalSync() as session:
+        try:
+            fulfillment = asyncio.run(confirm_shipment_for_order(session, order_id, use_mock=use_mock))
+        except ShipmentNotReadyError as exc:
+            return {"order_id": order_id, "shipped": False, "reason": str(exc)}
+        return {
+            "order_id": order_id,
+            "shipped": True,
+            "courier_code": fulfillment.courier_code,
+            "tracking_no": fulfillment.tracking_no,
         }

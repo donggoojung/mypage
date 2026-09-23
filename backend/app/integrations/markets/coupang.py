@@ -43,6 +43,12 @@ SHIPPING_PLACE_LIST_PATH = "/v2/providers/marketplace_openapi/apis/api/v1/vendor
 # 동작하는 오픈소스 구현체(kyungdongseo/coupang) 둘 다 조회는 v4를 쓴다.
 RETURN_SHIPPING_CENTER_LIST_PATH = "/v2/providers/openapi/apis/api/v4/vendors/{vendor_id}/returnShippingCenters"
 ORDER_SHEETS_PATH = "/v2/providers/openapi/apis/api/v4/vendors/{vendor_id}/ordersheets"
+# 2026-09-23 GitHub 오픈소스 구현체(kyungdongseo/coupang ordersheet.py)로 확인된 경로 —
+# 발주서를 "상품준비중"에서 "배송지시"로 바꾼다(PRD 6.1 발송처리). 요청 바디는
+# {"orderSheetInvoiceApplyDtos": [{"shipmentBoxId", "orderId", "vendorItemId",
+# "deliveryCompanyCode", "invoiceNumber", ...}]} 형태 — 정확한 필드명은 실API로
+# 재확인 필요(실API 미검증).
+SHIPMENT_INVOICE_PATH = "/v2/providers/openapi/apis/api/v4/vendors/{vendor_id}/orders/invoices"
 CATEGORY_PREDICTION_PATH = "/v2/providers/openapi/apis/api/v1/categorization/predict"
 # 2026-09-22 웹검색으로 확인됨(실API 미검증 — 정확한 요청/응답 필드명은 실API로 재확인 필요):
 # 브랜드명 텍스트를 그대로 보내면(등록된 브랜드와 완전히 일치하지 않는 경우) "브랜드 ID가
@@ -421,6 +427,11 @@ class CoupangWingClient:
                         "externalVendorSku": "CW2288-111-250",
                         "shippingCount": 1,
                         "salesPrice": 192834,
+                        # 발송처리(confirm_shipping)에 필요한 식별자 — 실API 응답에도
+                        # orderItems마다 같이 내려온다(실API 미검증, kyungdongseo/coupang
+                        # ordersheet.py의 송장업로드 요청 필드 기준).
+                        "shipmentBoxId": 900000001,
+                        "vendorItemId": 90000001,
                     }
                 ],
             }
@@ -441,6 +452,69 @@ class CoupangWingClient:
             response = await client.get(f"{COUPANG_API_HOST}{path}{query}", headers=headers)
             response.raise_for_status()
             return response.json().get("data", [])
+
+    async def confirm_shipping(
+        self,
+        vendor_id: str,
+        order_id: int,
+        vendor_item_id: int,
+        shipment_box_id: int,
+        delivery_company_code: str,
+        invoice_number: str,
+    ) -> dict:
+        """운송장 번호를 등록해 주문 상태를 "상품준비중" → "배송지시"로 바꾼다 (PRD 6.1 발송처리).
+
+        실API 미검증 — kyungdongseo/coupang(GitHub 오픈소스 구현체)의 ordersheet.py
+        `update_order_shipping_info`로 확인된 경로/바디 구조를 그대로 따른다.
+        """
+        if self._use_mock:
+            return self._mock_confirm_shipping(order_id, invoice_number)
+        return await self._real_confirm_shipping(
+            vendor_id, order_id, vendor_item_id, shipment_box_id, delivery_company_code, invoice_number
+        )
+
+    @staticmethod
+    def _mock_confirm_shipping(order_id: int, invoice_number: str) -> dict:
+        return {
+            "code": "SUCCESS",
+            "message": f"(Mock) 주문 {order_id}의 송장({invoice_number})이 등록되어 배송지시 상태로 전환되었습니다.",
+            "data": None,
+        }
+
+    async def _real_confirm_shipping(
+        self,
+        vendor_id: str,
+        order_id: int,
+        vendor_item_id: int,
+        shipment_box_id: int,
+        delivery_company_code: str,
+        invoice_number: str,
+    ) -> dict:
+        path = SHIPMENT_INVOICE_PATH.format(vendor_id=vendor_id)
+        headers = _build_authorization_header(
+            method="POST",
+            path=path,
+            access_key=self._settings.coupang_access_key,
+            secret_key=self._settings.coupang_secret_key,
+        )
+        payload = {
+            "vendorId": vendor_id,
+            "orderSheetInvoiceApplyDtos": [
+                {
+                    "shipmentBoxId": shipment_box_id,
+                    "orderId": order_id,
+                    "vendorItemId": vendor_item_id,
+                    "deliveryCompanyCode": delivery_company_code,
+                    "invoiceNumber": invoice_number,
+                    "splitShipping": False,
+                    "preSplitShipped": False,
+                }
+            ],
+        }
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(f"{COUPANG_API_HOST}{path}", headers=headers, json=payload)
+            response.raise_for_status()
+            return response.json()
 
     async def predict_category(self, product_name: str) -> dict:
         """상품명으로 쿠팡 전시카테고리를 자동 추천받는다 (PRD 4장 등록 준비).

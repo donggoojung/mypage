@@ -26,8 +26,24 @@ import re
 from datetime import UTC, datetime
 
 from app.core.config import Settings, get_settings
-from app.integrations.rpa.base import BaseRPAClient, ShippingInfo
+from app.integrations.rpa.base import BaseRPAClient, ShippingInfo, TrackingInfo
 from app.integrations.scrapers.stealth import STEALTH_INIT_SCRIPT, chromium_launch_kwargs, new_context_kwargs
+
+# PRD 6.1: 마이페이지 주문내역 화면에서 택배사명/운송장번호가 보통 이런 문구 근처에
+# 표시된다 — 실사이트 미검증(최선의 추정), scripts/test_tracking_lookup.py로 검증 필요.
+ORDER_HISTORY_URL = "https://abcmart.a-rt.com/mypage/order/list"
+TRACKING_NUMBER_LABEL_PATTERN = re.compile(r"송장\s*번호\s*[:：]?\s*([A-Za-z0-9-]+)")
+COURIER_NAME_LABEL_PATTERN = re.compile(r"(CJ\s*대한통운|한진택배|롯데택배|우체국택배|로젠택배)")
+# ABC마트가 실제로 쓰는 택배사명 → 쿠팡 deliveryCompanyCode 매핑. CJ대한통운만 이
+# 코드베이스 다른 곳(쿠팡 상품등록 deliveryCompanyCode 기본값)에서 이미 "CJGLS"로
+# 쓰고 있어 그대로 재사용한다 — 나머지는 실API 미검증 추정값.
+COURIER_NAME_TO_CODE = {
+    "CJ대한통운": "CJGLS",
+    "한진택배": "HANJIN",
+    "롯데택배": "LOTTE",
+    "우체국택배": "EPOST",
+    "로젠택배": "LOGEN",
+}
 
 # PRD 5.2-3: 사람처럼 보이도록 타이핑 사이 지연을 준다.
 TYPING_DELAY_MS_RANGE = (100, 150)
@@ -77,6 +93,14 @@ class MockRPAClient(BaseRPAClient):
         _validate_shipping_info(shipping_info)
         timestamp = datetime.now(UTC).strftime("%Y%m%d%H%M%S")
         return f"MOCK-{style_code}-{size}-{timestamp}-{random.randint(1000, 9999)}"
+
+    async def fetch_tracking_info(self, source_order_id: str) -> TrackingInfo | None:
+        # Mock은 항상 발송 완료 상태로 가정하고 가상의 운송장 정보를 돌려준다.
+        return TrackingInfo(
+            courier_name="CJ대한통운",
+            courier_code="CJGLS",
+            tracking_no=f"MOCK-TRACK-{abs(hash(source_order_id)) % 10**12:012d}",
+        )
 
 
 class PlaywrightRPAClient(BaseRPAClient):
@@ -427,3 +451,81 @@ class PlaywrightRPAClient(BaseRPAClient):
         if match:
             return match.group(1)
         raise RPAPurchaseError("결제 버튼은 눌렀지만 주문완료 화면에서 주문번호를 찾지 못했습니다 — 직접 확인이 필요합니다.")
+
+    async def fetch_tracking_info(self, source_order_id: str) -> TrackingInfo | None:
+        """PRD 6.1: 마이페이지 주문내역에서 이 주문의 택배사명/운송장번호를 찾는다.
+
+        실사이트 미검증 — `_complete_payment`가 최종 결제까지 실행됐을 때만 돌려주는
+        진짜 ABC마트 주문번호(`source_order_id`, "REVIEW_ONLY-..." 접두어가 아닌 값)를
+        받아서, 그 주문번호가 적힌 행을 찾아 택배사명/운송장번호를 읽는다. 아직 소싱처가
+        발송 준비 중이라 운송장이 안 뜬 상태면 None을 돌려준다 — 호출부가 나중에 다시
+        폴링해야 한다는 뜻이다.
+        """
+        if source_order_id.startswith(REVIEW_ONLY_PREFIX):
+            raise RPAPurchaseError(
+                f"'{source_order_id}'는 실제 결제가 완료된 주문번호가 아닙니다(최종 결제 직전에 "
+                "멈춘 상태) — 운송장을 조회할 수 없습니다."
+            )
+        if not self._session_cookies:
+            raise RPAPurchaseError(
+                "소싱처 로그인 세션(쿠키)이 없습니다 — scripts/save_abc_mart_session.py로 먼저 "
+                "로그인 세션을 저장해주세요."
+            )
+
+        from playwright.async_api import async_playwright
+
+        async with async_playwright() as playwright:
+            browser = await playwright.chromium.launch(**chromium_launch_kwargs(self._headless))
+            try:
+                context = await browser.new_context(**new_context_kwargs())
+                await context.add_init_script(STEALTH_INIT_SCRIPT)
+                await context.add_cookies(self._session_cookies)
+                page = await context.new_page()
+
+                try:
+                    await page.goto(ORDER_HISTORY_URL, wait_until="domcontentloaded", timeout=20000)
+
+                    order_row = page.locator("tr, li, div").filter(has_text=source_order_id)
+                    row_count = await order_row.count()
+                    if row_count == 0:
+                        raise RPAPurchaseError(
+                            f"마이페이지 주문내역에서 주문번호 '{source_order_id}'를 찾지 못했습니다 — "
+                            "화면을 캡처해서 실제 주문내역 화면 구조를 확인해야 합니다."
+                        )
+
+                    row_text = await order_row.first.inner_text()
+
+                    tracking_match = TRACKING_NUMBER_LABEL_PATTERN.search(row_text)
+                    if not tracking_match:
+                        # 아직 소싱처에서 발송 준비 중이라 운송장이 안 나온 상태일 수 있다 —
+                        # 이건 에러가 아니라 "나중에 다시 확인" 신호다.
+                        return None
+
+                    courier_match = COURIER_NAME_LABEL_PATTERN.search(row_text)
+                    if not courier_match:
+                        raise RPAPurchaseError(
+                            f"운송장번호({tracking_match.group(1)})는 찾았지만 택배사명을 찾지 "
+                            f"못했습니다 — 화면 문구를 확인해야 합니다 (행 텍스트: {row_text!r})."
+                        )
+
+                    courier_name = courier_match.group(1).replace(" ", "")
+                    courier_code = COURIER_NAME_TO_CODE.get(courier_name)
+                    if courier_code is None:
+                        raise RPAPurchaseError(
+                            f"택배사 '{courier_name}'에 대응하는 쿠팡 deliveryCompanyCode를 모릅니다 — "
+                            "COURIER_NAME_TO_CODE에 추가해야 합니다."
+                        )
+
+                    return TrackingInfo(
+                        courier_name=courier_name,
+                        courier_code=courier_code,
+                        tracking_no=tracking_match.group(1),
+                    )
+                except Exception as exc:
+                    if self._pause_on_error:
+                        print(f"\n실패 원인: {exc}", flush=True)
+                        print(f"실패한 화면에서 멈췄습니다 — 지금 뜬 브라우저 창을 직접 보고 캡처하세요 (URL: {page.url}).", flush=True)
+                        await asyncio.to_thread(input, "확인했으면 Enter를 눌러 창을 닫으세요 >>> ")
+                    raise
+            finally:
+                await browser.close()

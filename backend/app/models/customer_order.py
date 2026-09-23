@@ -25,6 +25,10 @@ class CustomerOrder(Base, TimestampMixin):
     paid_amount: Mapped[float] = mapped_column(Numeric(10, 2), nullable=False)
     # PRD 5.2 "상태값을 ORDER_PURCHASED로 전환" 등 주문 파이프라인 전이를 추적하기 위한 컬럼.
     status: Mapped[OrderStatus] = mapped_column(SAEnum(OrderStatus), default=OrderStatus.RECEIVED, nullable=False)
+    # PRD 6.1 발송처리(confirm_shipping) 시 쿠팡 송장업로드 API에 그대로 넘겨야 하는
+    # 식별자 — 발주서 조회(detect_new_orders) 시점에 orderItems에서 같이 받아 저장해둔다.
+    market_shipment_box_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    market_vendor_item_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
     product: Mapped["MasterProduct"] = relationship()
 
