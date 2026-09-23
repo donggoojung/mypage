@@ -5,6 +5,7 @@ import pytest
 from app.integrations.rpa.base import ShippingInfo
 from app.integrations.rpa.factory import _load_saved_session_cookies, get_rpa_client
 from app.integrations.rpa.purchase_bot import MockRPAClient, RPAPurchaseError
+from app.models.enums import SourcePlatform
 
 
 @pytest.mark.asyncio
@@ -36,6 +37,25 @@ def test_factory_respects_explicit_use_mock_false_flag():
     from app.integrations.rpa.purchase_bot import PlaywrightRPAClient
 
     assert isinstance(client, PlaywrightRPAClient)
+
+
+def test_factory_routes_to_musinsa_client_for_musinsa_platform():
+    """실사이트 미검증 스켈레톤이지만, 소싱처별 라우팅 자체는 여기서 검증한다."""
+    from app.integrations.rpa.musinsa_purchase_bot import MusinsaRPAClient
+
+    client = get_rpa_client(
+        source_base_url="https://www.musinsa.com",
+        session_cookies=[],
+        use_mock=False,
+        source_platform=SourcePlatform.MUSINSA,
+    )
+
+    assert isinstance(client, MusinsaRPAClient)
+
+
+def test_factory_returns_mock_client_regardless_of_platform_when_use_mock_true():
+    client = get_rpa_client(use_mock=True, source_platform=SourcePlatform.MUSINSA)
+    assert isinstance(client, MockRPAClient)
 
 
 @pytest.mark.asyncio

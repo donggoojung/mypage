@@ -26,7 +26,14 @@ import re
 from datetime import UTC, datetime
 
 from app.core.config import Settings, get_settings
-from app.integrations.rpa.base import BaseRPAClient, ShippingInfo, TrackingInfo
+from app.integrations.rpa.base import (
+    REVIEW_ONLY_PREFIX,
+    BaseRPAClient,
+    RPAPurchaseError,
+    ShippingInfo,
+    TrackingInfo,
+    validate_shipping_info,
+)
 from app.integrations.scrapers.stealth import STEALTH_INIT_SCRIPT, chromium_launch_kwargs, new_context_kwargs
 
 # PRD 6.1: 마이페이지 주문내역 화면에서 택배사명/운송장번호가 보통 이런 문구 근처에
@@ -64,24 +71,6 @@ PAYMENT_METHOD_SECTION_TEXTS = ["결제수단", "결제 수단"]
 FINAL_PAYMENT_BUTTON_TEXTS = ["결제하기", "최종결제", "결제 하기"]
 ORDER_NUMBER_LABEL_PATTERN = re.compile(r"주문\s*번호\s*[:：]?\s*([A-Za-z0-9-]+)")
 
-# 최종 결제 직전 단계까지만 진행하고 멈췄을 때 반환하는 값 — 실제 주문번호가 아니라는 걸
-# 호출자가 바로 알아볼 수 있게 접두어를 확실히 다르게 둔다.
-REVIEW_ONLY_PREFIX = "REVIEW_ONLY"
-
-
-class RPAPurchaseError(RuntimeError):
-    """무인 발주 진행 중(재고 소진, 세션 만료, 결제 실패 등) 발생한 오류."""
-
-
-def _validate_shipping_info(shipping_info: ShippingInfo) -> None:
-    missing = [
-        field
-        for field in ("recipient_name", "recipient_phone", "shipping_addr")
-        if not getattr(shipping_info, field)
-    ]
-    if missing:
-        raise RPAPurchaseError(f"배송지 정보 누락: {missing}")
-
 
 class MockRPAClient(BaseRPAClient):
     """실제 사이트 호출 없이, 배송지 검증 로직과 발주 성공 흐름만 재현하는 Mock 구현."""
@@ -90,7 +79,7 @@ class MockRPAClient(BaseRPAClient):
         self, style_code: str, size: str, shipping_info: ShippingInfo, confirm_final_payment: bool = False
     ) -> str:
         # Mock은 실제 결제가 없으니 confirm_final_payment 값과 무관하게 항상 성공 처리한다.
-        _validate_shipping_info(shipping_info)
+        validate_shipping_info(shipping_info)
         timestamp = datetime.now(UTC).strftime("%Y%m%d%H%M%S")
         return f"MOCK-{style_code}-{size}-{timestamp}-{random.randint(1000, 9999)}"
 
@@ -132,7 +121,7 @@ class PlaywrightRPAClient(BaseRPAClient):
     async def purchase_order(
         self, style_code: str, size: str, shipping_info: ShippingInfo, confirm_final_payment: bool = False
     ) -> str:
-        _validate_shipping_info(shipping_info)
+        validate_shipping_info(shipping_info)
         if not self._session_cookies:
             raise RPAPurchaseError(
                 "소싱처 로그인 세션(쿠키)이 없습니다 — scripts/save_abc_mart_session.py로 먼저 "

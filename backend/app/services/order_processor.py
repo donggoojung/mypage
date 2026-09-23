@@ -4,9 +4,8 @@ from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
 from app.integrations.messaging.telegram_admin import TelegramAdminNotifier
-from app.integrations.rpa.base import ShippingInfo
+from app.integrations.rpa.base import REVIEW_ONLY_PREFIX, ShippingInfo
 from app.integrations.rpa.factory import get_rpa_client
-from app.integrations.rpa.purchase_bot import REVIEW_ONLY_PREFIX
 from app.models.customer_order import CustomerOrder
 from app.models.enums import OrderStatus
 from app.models.master_product import MasterProduct
@@ -36,7 +35,9 @@ async def process_new_order(session: Session, order_id: int, use_mock: bool | No
     try:
         quote = await find_cheapest_source(session, order.product_id, order.ordered_size, order.quantity)
 
-        rpa_client = get_rpa_client(source_base_url=quote.source_url, use_mock=use_mock)
+        rpa_client = get_rpa_client(
+            source_base_url=quote.source_url, use_mock=use_mock, source_platform=quote.source_platform
+        )
         shipping_info = ShippingInfo(
             recipient_name=order.recipient_name,
             recipient_phone=order.recipient_phone,

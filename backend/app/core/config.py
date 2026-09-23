@@ -55,6 +55,8 @@ class Settings(BaseSettings):
     # --- RPA(무인발주) 관련 ---
     # scripts/save_abc_mart_session.py로 저장해둔 ABC마트 로그인 쿠키 파일 경로.
     abc_mart_session_file: str = "scripts/output/abc_mart_session.json"
+    # 무신사 로그인 쿠키 파일 경로 — 저장 스크립트는 아직 없음(실사이트 검증 시 작성 필요).
+    musinsa_session_file: str = "scripts/output/musinsa_session.json"
     # False(기본값, 안전) = 체크아웃 최종 확인 단계까지만 진행하고 실제 결제 버튼은 누르지 않는다.
     # 실제 자동구매를 완료하려면 이 값을 명시적으로 true로 바꿔야 한다 (쿠팡 request_approval과 같은 안전장치).
     rpa_confirm_final_payment: bool = False

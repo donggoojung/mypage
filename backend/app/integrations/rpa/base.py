@@ -12,11 +12,31 @@ class ShippingInfo:
 
 @dataclass
 class TrackingInfo:
-    """PRD 6.1 발송처리에 필요한 소싱처(ABC마트) 운송장 정보."""
+    """PRD 6.1 발송처리에 필요한 소싱처 운송장 정보."""
 
     courier_name: str
     courier_code: str  # 쿠팡 deliveryCompanyCode 값 (예: "CJGLS")
     tracking_no: str
+
+
+# 최종 결제 직전 단계까지만 진행하고 멈췄을 때 반환하는 값 — 실제 주문번호가 아니라는 걸
+# 호출자가 바로 알아볼 수 있게 접두어를 확실히 다르게 둔다. 소싱처(ABC마트/무신사 등)에
+# 상관없이 order_processor.py가 공통으로 검사하는 값이라 여기(공통 base)에 둔다.
+REVIEW_ONLY_PREFIX = "REVIEW_ONLY"
+
+
+class RPAPurchaseError(RuntimeError):
+    """무인 발주 진행 중(재고 소진, 세션 만료, 결제 실패 등) 발생한 오류. 소싱처 공통."""
+
+
+def validate_shipping_info(shipping_info: ShippingInfo) -> None:
+    missing = [
+        field
+        for field in ("recipient_name", "recipient_phone", "shipping_addr")
+        if not getattr(shipping_info, field)
+    ]
+    if missing:
+        raise RPAPurchaseError(f"배송지 정보 누락: {missing}")
 
 
 class BaseRPAClient(ABC):

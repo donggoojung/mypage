@@ -42,7 +42,7 @@ async def confirm_shipment_for_order(session: Session, order_id: int, use_mock: 
 
     # source_base_url은 이 클라이언트의 fetch_tracking_info가 쓰지 않는다(마이페이지 주문내역
     # URL이 고정값이라) — purchase_order와 시그니처를 맞추기 위해 빈 문자열을 넘긴다.
-    rpa_client = get_rpa_client(source_base_url="", use_mock=use_mock)
+    rpa_client = get_rpa_client(source_base_url="", use_mock=use_mock, source_platform=fulfillment.source_platform)
     tracking = await rpa_client.fetch_tracking_info(fulfillment.source_order_id)
     if tracking is None:
         raise ShipmentNotReadyError(
