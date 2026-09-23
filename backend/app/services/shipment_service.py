@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
 from app.integrations.markets.coupang import CoupangRegistrationError, CoupangWingClient
+from app.integrations.messaging.solapi import SolapiMessagingClient
 from app.integrations.rpa.factory import get_rpa_client
 from app.models.customer_order import CustomerOrder
 from app.models.enums import OrderStatus
@@ -69,4 +70,31 @@ async def confirm_shipment_for_order(session: Session, order_id: int, use_mock: 
     order.status = OrderStatus.SHIPPED
     session.commit()
 
+    await _notify_customer_of_shipment(order, tracking, settings, use_mock)
+
     return fulfillment
+
+
+async def _notify_customer_of_shipment(order: CustomerOrder, tracking, settings, use_mock: bool | None) -> None:
+    """PRD 6.2: 고객에게 "출고되었습니다" 카카오 알림톡(또는 문자)을 선제 발송한다.
+
+    "언제 오나요?" 같은 단순 배송 문의 CS를 줄이는 게 목적이지, 발송 자체가 주문
+    처리의 필수 조건은 아니다 — 이미 쿠팡 발송처리(order.status=SHIPPED)까지 끝난
+    뒤에 하는 부가 기능이므로, 알림 발송이 실패해도 주문 처리 결과를 되돌리지 않는다.
+    """
+    try:
+        product_name = order.product.product_name if order.product else "주문하신 상품"
+        messaging_client = SolapiMessagingClient(settings=settings, use_mock=use_mock)
+        await messaging_client.send_kakao_alert(
+            phone=order.recipient_phone,
+            template_id=settings.solapi_shipping_template_id,
+            variables={
+                "고객명": order.recipient_name,
+                "상품명": product_name,
+                "택배사": tracking.courier_name,
+                "운송장번호": tracking.tracking_no,
+            },
+        )
+        print(f"  [진단] 발송 안내(알림톡/문자) 발송 완료: order_id={order.order_id}", flush=True)
+    except Exception as exc:  # noqa: BLE001 - 부가 기능(고객 안내)이 발송처리 자체를 실패로 만들면 안 된다.
+        print(f"  발송 안내(알림톡/문자) 발송 실패({exc}) — 주문 상태(SHIPPED)는 그대로 유지합니다.", flush=True)

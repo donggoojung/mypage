@@ -69,10 +69,15 @@ class Settings(BaseSettings):
     # 그 서비스의 엔드포인트(R2는 https://<계정ID>.r2.cloudflarestorage.com)를 넣는다.
     aws_s3_endpoint_url: str = ""
 
-    # 솔라피
+    # 솔라피 (카카오 알림톡 + SMS 자동 폴백, PRD 6.2)
     solapi_api_key: str = ""
     solapi_api_secret: str = ""
     solapi_kakao_pfid: str = ""
+    # 사전에 솔라피에 등록해둔 발신번호(문자 대체발송 시 필요) — 등록 안 하면 발신 자체가 거부된다.
+    solapi_sender_phone: str = ""
+    # 배송출고 안내 알림톡 템플릿 ID — 카카오 채널/템플릿 심사 승인 후 발급된 값을 채운다.
+    # 비워두면(기본값) 알림톡 대신 문자(SMS)로만 발송한다.
+    solapi_shipping_template_id: str = ""
 
     # AI 연산 API
     replicate_api_token: str = ""
