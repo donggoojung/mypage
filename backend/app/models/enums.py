@@ -51,6 +51,12 @@ class OrderStatus(str, enum.Enum):
     DELIVERED = "delivered"
     CANCELLED = "cancelled"
     REFUNDED = "refunded"
+    # PRD 7장 역물류: 소싱처(ABC마트)에 이미 매입 비용이 나간 뒤(ORDER_PURCHASED/SHIPPED)에
+    # 쿠팡 취소가 감지된 경우 — 배송비/매입비 손실 위험이 있어 CANCELLED로 바로 넘기지
+    # 않고 관리자 확인이 필요한 상태로 멈춘다(HOLD와 유사한 "사람 확인 필요" 상태).
+    CANCEL_REQUESTED = "cancel_requested"
+    # 고객이 배송완료 후 쿠팡에서 반품을 접수한 경우 — return_requests에 상세 내역이 쌓인다.
+    RETURN_REQUESTED = "return_requested"
 
 
 class InspectionStatus(str, enum.Enum):

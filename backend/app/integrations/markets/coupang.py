@@ -43,6 +43,16 @@ SHIPPING_PLACE_LIST_PATH = "/v2/providers/marketplace_openapi/apis/api/v1/vendor
 # 동작하는 오픈소스 구현체(kyungdongseo/coupang) 둘 다 조회는 v4를 쓴다.
 RETURN_SHIPPING_CENTER_LIST_PATH = "/v2/providers/openapi/apis/api/v4/vendors/{vendor_id}/returnShippingCenters"
 ORDER_SHEETS_PATH = "/v2/providers/openapi/apis/api/v4/vendors/{vendor_id}/ordersheets"
+# 2026-09-23 쿠팡 오픈API 공식 문서 기억 기반(실API 미검증) — 발주서 조회 API는 status
+# 쿼리파라미터로 CANCEL(결제취소)도 조회할 수 있다(위 ORDER_SHEETS_PATH와 동일 엔드포인트,
+# status 값만 다름). PRD 7장 "쿠팡 취소 조회 API(ordersheets/cancellations)" 요구사항 대응 —
+# 실제로는 별도 cancellations 경로가 아니라 이 발주서 조회 API의 status=CANCEL로 처리된다
+# (실API로 재확인 필요).
+# 2026-09-23 쿠팡 오픈API 공식 문서 기억 기반(실API 미검증) — 반품 접수 목록 조회 전용
+# API. createdAtFrom/createdAtTo(날짜 범위, YYYY-MM-DD)가 필수 파라미터로 보인다 —
+# 최근 처리되지 않은 반품을 놓치지 않도록 폴링 시마다 최근 N일(기본 7일) 범위로 조회한다.
+# PRD 7장 "쿠팡 반품 조회 API(return-requests)" 요구사항 대응.
+RETURN_REQUESTS_PATH = "/v2/providers/openapi/apis/api/v4/vendors/{vendor_id}/returnRequests"
 # 2026-09-23 GitHub 오픈소스 구현체(kyungdongseo/coupang ordersheet.py)로 확인된 경로 —
 # 발주서를 "상품준비중"에서 "배송지시"로 바꾼다(PRD 6.1 발송처리). 요청 바디는
 # {"orderSheetInvoiceApplyDtos": [{"shipmentBoxId", "orderId", "vendorItemId",
@@ -441,6 +451,65 @@ class CoupangWingClient:
         path = ORDER_SHEETS_PATH.format(vendor_id=vendor_id)
         # status=INSTRUCT: 결제 완료 후 상품 준비(발송) 대기 중인 신규 주문만 조회 (실API 미검증).
         query = "?status=INSTRUCT"
+        headers = _build_authorization_header(
+            method="GET",
+            path=path,
+            access_key=self._settings.coupang_access_key,
+            secret_key=self._settings.coupang_secret_key,
+            query=query,
+        )
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.get(f"{COUPANG_API_HOST}{path}{query}", headers=headers)
+            response.raise_for_status()
+            return response.json().get("data", [])
+
+    async def fetch_cancelled_order_sheets(self, vendor_id: str) -> list[dict]:
+        """결제 취소된 주문 목록을 조회한다 (PRD 7장 — 매입 전/후 취소 구분 감지용).
+
+        발주서 조회 API를 status=CANCEL로 호출한다 — fetch_paid_order_sheets(status=INSTRUCT)와
+        같은 엔드포인트다.
+        """
+        if self._use_mock:
+            return self._mock_cancelled_order_sheets()
+        return await self._real_fetch_cancelled_order_sheets(vendor_id)
+
+    @staticmethod
+    def _mock_cancelled_order_sheets() -> list[dict]:
+        return []
+
+    async def _real_fetch_cancelled_order_sheets(self, vendor_id: str) -> list[dict]:
+        path = ORDER_SHEETS_PATH.format(vendor_id=vendor_id)
+        query = "?status=CANCEL"
+        headers = _build_authorization_header(
+            method="GET",
+            path=path,
+            access_key=self._settings.coupang_access_key,
+            secret_key=self._settings.coupang_secret_key,
+            query=query,
+        )
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.get(f"{COUPANG_API_HOST}{path}{query}", headers=headers)
+            response.raise_for_status()
+            return response.json().get("data", [])
+
+    async def fetch_return_requests(self, vendor_id: str, lookback_days: int = 7) -> list[dict]:
+        """최근 N일 이내 접수된 반품 요청 목록을 조회한다 (PRD 7.1 반품 접수 감지)."""
+        if self._use_mock:
+            return self._mock_return_requests()
+        return await self._real_fetch_return_requests(vendor_id, lookback_days)
+
+    @staticmethod
+    def _mock_return_requests() -> list[dict]:
+        return []
+
+    async def _real_fetch_return_requests(self, vendor_id: str, lookback_days: int) -> list[dict]:
+        from datetime import timedelta
+
+        path = RETURN_REQUESTS_PATH.format(vendor_id=vendor_id)
+        now = datetime.now(UTC)
+        date_from = (now - timedelta(days=lookback_days)).strftime("%Y-%m-%d")
+        date_to = now.strftime("%Y-%m-%d")
+        query = f"?createdAtFrom={date_from}&createdAtTo={date_to}"
         headers = _build_authorization_header(
             method="GET",
             path=path,

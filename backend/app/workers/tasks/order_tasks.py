@@ -8,6 +8,7 @@ from app.models.customer_order import CustomerOrder
 from app.models.enums import MarketType
 from app.models.master_product import MasterProduct
 from app.services.order_processor import process_new_order
+from app.services.return_service import detect_cancellations_and_returns
 from app.services.shipment_service import ShipmentNotReadyError, confirm_shipment_for_order
 
 
@@ -60,6 +61,18 @@ def detect_new_orders(use_mock: bool | None = None) -> dict:
 
         session.commit()
         return {"created_order_ids": created_order_ids, "skipped_unknown_sku": skipped_unknown_sku}
+
+
+@celery_app.task(name="order_tasks.detect_cancellations_and_returns")
+def detect_cancellations_and_returns_task(use_mock: bool | None = None) -> dict:
+    """PRD 7.1: 쿠팡 취소/반품을 폴링해 즉시 상태를 반영하고 필요 시 관리자에게 알린다.
+
+    신규 주문 감지와 동일하게 5분 주기 스케줄러(Celery beat)로 호출한다 — 대표님이
+    "가장 치명적"이라 지적한 부분(매입 완료 후 취소 시 배송비/매입비 손실 위험)이라
+    같은 긴급도로 다룬다.
+    """
+    with SessionLocalSync() as session:
+        return asyncio.run(detect_cancellations_and_returns(session, use_mock=use_mock))
 
 
 @celery_app.task(name="order_tasks.process_order")

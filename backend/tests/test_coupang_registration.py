@@ -572,3 +572,21 @@ def test_sync_stock_and_price_skips_when_vendor_item_ids_empty(sample_listing, d
 
     assert result["stopped"] == []
     assert result["skipped_reason"] is not None
+
+
+async def test_fetch_cancelled_order_sheets_mock_returns_empty_list():
+    """Mock 모드에서는 취소 건이 없다고 안전하게 빈 목록을 돌려준다(PRD 7장)."""
+    client = CoupangWingClient(use_mock=True)
+
+    result = await client.fetch_cancelled_order_sheets("VENDOR123")
+
+    assert result == []
+
+
+async def test_fetch_return_requests_mock_returns_empty_list():
+    """Mock 모드에서는 반품 접수 건이 없다고 안전하게 빈 목록을 돌려준다(PRD 7장)."""
+    client = CoupangWingClient(use_mock=True)
+
+    result = await client.fetch_return_requests("VENDOR123")
+
+    assert result == []

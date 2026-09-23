@@ -178,6 +178,15 @@
     </div>
     <div id="orders-area"><p class="empty">불러오는 중...</p></div>
   </section>
+
+  <section class="card">
+    <div class="card-header-row">
+      <h2>반품/취소 관리</h2>
+      <button class="secondary" onclick="loadReturns()">새로고침</button>
+    </div>
+    <p class="empty" style="margin-top:-6px">쿠팡 취소/반품이 감지되면 5분 안에 여기에 나타나고 텔레그램으로도 알림이 갑니다. 반품 상품이 거점(사무실/자택)에 도착하면 훼손·시착흔적·텍(Tag)을 확인하고 아래 버튼으로 검수 결과를 처리해주세요.</p>
+    <div id="returns-area"><p class="empty">불러오는 중...</p></div>
+  </section>
 </main>
 
 <script>
@@ -185,12 +194,21 @@ const STATUS_LABELS = {
   active: "판매중", draft: "임시저장", sold_out: "품절", suspended: "판매중지",
   received: "주문접수", sourcing_in_progress: "소싱중", hold: "보류(확인필요)", order_purchased: "매입완료",
   shipped: "배송중", delivered: "배송완료", cancelled: "취소", refunded: "환불",
+  cancel_requested: "취소 발생(확인필요)", return_requested: "반품 접수됨",
+};
+
+const INSPECTION_LABELS = {
+  received_at_warehouse: "거점 입고 대기", inspection_passed: "검수 통과",
+  inspection_failed: "검수 불합격", source_return_requested: "소싱처 반품 접수 필요",
+  source_return_completed: "소싱처 반품 완료", dispute_investigating: "분쟁 조사중",
+  refund_completed: "환불 완료",
 };
 
 function badgeClass(status) {
   if (status === "active") return "active";
   if (status === "draft") return "draft";
-  if (status === "hold") return "danger";
+  if (status === "hold" || status === "cancel_requested" || status === "dispute_investigating") return "danger";
+  if (status === "return_requested") return "draft";
   return "other";
 }
 
@@ -497,8 +515,73 @@ async function loadOrders() {
   `;
 }
 
+async function loadReturns() {
+  const area = document.getElementById("returns-area");
+  let items;
+  try {
+    items = await (await fetch("/api/returns")).json();
+  } catch (err) {
+    area.innerHTML = `<p class="empty">불러오기 실패: ${err.message}</p>`;
+    return;
+  }
+
+  if (!items.length) {
+    area.innerHTML = `<p class="empty">접수된 반품/취소가 없습니다.</p>`;
+    return;
+  }
+
+  const rows = items.map(r => `
+    <tr>
+      <td>${r.market_order_id || "-"}</td>
+      <td>${r.claim_reason}</td>
+      <td><span class="badge ${badgeClass(r.inspection_status)}">${INSPECTION_LABELS[r.inspection_status] || r.inspection_status}</span></td>
+      <td>${r.source_refund_amount !== null ? fmtWon(r.source_refund_amount) : "-"}</td>
+      <td>
+        ${r.inspection_status === "received_at_warehouse" ? `
+          <button onclick="updateReturnStatus(${r.return_id}, 'inspection-passed')">검수 통과</button>
+          <button class="secondary" onclick="updateReturnStatus(${r.return_id}, 'inspection-failed')">검수 불합격</button>
+        ` : ""}
+        ${r.inspection_status === "source_return_requested" ? `
+          <button onclick="completeSourceReturn(${r.return_id})">소싱처 반품 완료</button>
+        ` : ""}
+      </td>
+    </tr>
+  `).join("");
+
+  area.innerHTML = `
+    <table>
+      <thead><tr><th>주문번호</th><th>사유</th><th>검수/처리 상태</th><th>소싱처 환불액</th><th>처리</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+  `;
+}
+
+async function updateReturnStatus(returnId, action) {
+  try {
+    const res = await fetch(`/api/returns/${returnId}/${action}`, { method: "POST" });
+    if (!res.ok) throw new Error(`서버 오류 (${res.status})`);
+    loadReturns();
+  } catch (err) {
+    alert("처리 실패: " + err.message);
+  }
+}
+
+async function completeSourceReturn(returnId) {
+  const amountStr = prompt("ABC마트에서 실제로 환불받은 금액(원)을 입력해주세요 (모르면 비워두고 확인 누르세요).");
+  if (amountStr === null) return;
+  const amount = amountStr.trim() === "" ? "" : `?source_refund_amount=${parseFloat(amountStr)}`;
+  try {
+    const res = await fetch(`/api/returns/${returnId}/source-return-completed${amount}`, { method: "POST" });
+    if (!res.ok) throw new Error(`서버 오류 (${res.status})`);
+    loadReturns();
+  } catch (err) {
+    alert("처리 실패: " + err.message);
+  }
+}
+
 loadProducts();
 loadOrders();
+loadReturns();
 </script>
 </body>
 </html>

@@ -32,6 +32,12 @@ celery_app.conf.beat_schedule = {
         "task": "order_tasks.detect_new_orders",
         "schedule": 300.0,
     },
+    # PRD 7장: 매입 완료 후 취소/반품 감지가 가장 치명적인 리스크(배송비/매입비 손실)라
+    # 신규 주문 감지와 같은 5분 주기로 다룬다.
+    "detect-cancellations-and-returns-every-5-minutes": {
+        "task": "order_tasks.detect_cancellations_and_returns",
+        "schedule": 300.0,
+    },
     "refresh-source-stock-every-30-minutes": {
         "task": "crawl_tasks.refresh_all_source_mappings",
         "schedule": 1800.0,
