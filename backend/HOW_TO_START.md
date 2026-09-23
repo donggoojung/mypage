@@ -20,6 +20,16 @@ Docker Desktop이 켜졌으면, 파워셀에서 DB/Redis 컨테이너도 켜주�
 docker compose up -d
 ```
 
+컨테이너가 켜졌으면(위 명령 성공), DB 구조도 최신으로 맞춰주세요.
+
+```powershell
+alembic upgrade head
+```
+
+이건 "DB에 새 상태값/컬럼이 추가됐어요" 같은 변경을 실제 DB에 반영하는 명령이에요. `git pull`로
+코드만 받고 이걸 빼먹으면, 새 기능이 화면에서 에러로 뜰 수 있어요 — **git pull 받을 때마다
+이 순서(1. Docker 켜기 → 2. alembic upgrade head)를 같이 해주세요.**
+
 ## 2. 워커 창 켜기 (파워셀 새 창)
 
 ```powershell
@@ -30,7 +40,20 @@ celery -A app.core.celery_app worker --loglevel=info --pool=solo
 
 `celery@...ready.` 라는 줄이 뜨면 성공. **이 창은 계속 켜두세요.**
 
-## 3. 서버 창 켜기 (파워셀 또 새 창)
+## 3. 스케줄러(beat) 창 켜기 (파워셀 또 새 창) — 5분마다 자동으로 할 일 체크
+
+```powershell
+cd C:\Users\SSNPC\projects\mypage\backend
+.venv\Scripts\Activate.ps1
+celery -A app.core.celery_app beat --loglevel=info
+```
+
+**워커 창과는 역할이 달라요.** 워커는 "일을 실제로 처리하는 사람"이고, beat는 "5분마다 알람을
+울려서 워커한테 할 일을 시키는 사람"이에요. 이 창이 꺼져 있으면 "신규 주문 자동감지"와
+"쿠팡 취소/반품 자동감지"가 5분마다 자동으로 실행되지 않아요(대시보드에서 수동으로 새로고침하는
+것과는 별개). **이 창도 계속 켜두세요.**
+
+## 4. 서버 창 켜기 (파워셀 또 새 창)
 
 ```powershell
 cd C:\Users\SSNPC\projects\mypage\backend
@@ -42,7 +65,7 @@ uvicorn app.main:app --reload --reload-exclude "app/static/generated/*" --port 8
 
 (8080, 5433, 6379 이 세 포트는 이미 확인해서 코드에 고정해둔 값이라, 보통은 그대로 잘 됩니다. 혹시라도 또 막혀있다는 에러가 나면 아래 "포트가 또 막혔을 때" 항목 참고.)
 
-## 4. 브라우저로 접속
+## 5. 브라우저로 접속
 
 ```
 http://localhost:8080
@@ -54,15 +77,15 @@ http://localhost:8080
 
 ## 코드가 새로 바뀌었을 때 (재시작 필요)
 
-1. 워커 창, 서버 창 **둘 다** Ctrl+C로 끄기
-2. 아무 창에서나 `git pull origin claude/amazing-cannon-fjkoca`
-3. 워커 창, 서버 창 **둘 다** 위 2번, 3번 명령어로 다시 켜기
+1. 워커 창, 스케줄러(beat) 창, 서버 창 **모두** Ctrl+C로 끄기
+2. 아무 창에서나 `git pull origin claude/amazing-cannon-fjkoca` → `alembic upgrade head`
+3. 워커 창, 스케줄러(beat) 창, 서버 창 **모두** 위 2/3/4번 명령어로 다시 켜기
 4. 브라우저 새로고침(F5)
 
 ## 자주 헷갈리는 것들
 
-- **워커 창**과 **서버 창**은 서로 다른 역할이에요. 워커는 "실제 일(크롤링, 이미지생성, 쿠팡등록)"을 하고, 서버는 "브라우저 화면을 보여주는 역할"만 해요. **둘 다 켜져 있어야** 대시보드가 정상 작동합니다.
-- `git pull`은 한 곳에서 한 번만 받으면 됩니다 (같은 폴더를 보고 있어서요). 대신 재시작(Ctrl+C 후 다시 실행)은 워커/서버 둘 다 해야 새 코드가 반영돼요.
+- **워커 창**, **스케줄러(beat) 창**, **서버 창**은 서로 다른 역할이에요. 워커는 "실제 일(크롤링, 이미지생성, 쿠팡등록, 취소/반품 처리)"을 하고, beat는 "5분마다 워커한테 할 일을 시키는 알람 역할"만 하고, 서버는 "브라우저 화면을 보여주는 역할"만 해요. **셋 다 켜져 있어야** 대시보드와 자동감지 기능이 정상 작동합니다.
+- `git pull`은 한 곳에서 한 번만 받으면 됩니다 (같은 폴더를 보고 있어서요). 대신 재시작(Ctrl+C 후 다시 실행)은 워커/beat/서버 모두 해야 새 코드가 반영돼요.
 - 화면에 이미지가 안 보이거나 "안돼요" 싶으면, 먼저 워커 창에 에러 로그가 있는지 확인해주세요 — 실제 작업 결과/에러가 다 거기 찍힙니다.
 
 ## 포트가 또 막혔을 때 (`WinError 10013`, `ports are not available` 같은 에러)
