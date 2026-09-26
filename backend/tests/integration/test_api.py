@@ -202,3 +202,47 @@ async def test_discover_category_enqueues_celery_task(client, monkeypatch):
     )
     assert response.status_code == 200
     assert response.json() == {"task_id": "fake-discover-task-id"}
+
+
+@pytest.mark.asyncio
+async def test_export_orders_csv_returns_expected_columns(client, db_session):
+    """대시보드 [엑셀 다운로드] 버튼 — 세무 신고용 매입매출 CSV에 필요한 컬럼이 다 있는지 확인."""
+    product = MasterProduct(style_code="API-TEST-003", brand_name="테스트브랜드", product_name="테스트 운동화3")
+    db_session.add(product)
+    db_session.flush()
+
+    order = CustomerOrder(
+        market_type=MarketType.COUPANG,
+        market_order_id="ORDER-API-TEST-2",
+        product_id=product.product_id,
+        ordered_size="270",
+        quantity=1,
+        recipient_name="홍길동",
+        recipient_phone="0501-1234-5678",
+        shipping_addr="서울시 강남구",
+        paid_amount=150000,
+        status=OrderStatus.ORDER_PURCHASED,
+    )
+    db_session.add(order)
+    db_session.flush()
+
+    db_session.add(
+        OrderFulfillment(
+            order_id=order.order_id,
+            source_platform=SourcePlatform.ABC_MART,
+            source_order_id="SRC-2",
+            cost_paid=100000,
+        )
+    )
+    db_session.commit()
+
+    response = await client.get("/api/orders/export.csv")
+    assert response.status_code == 200
+    assert "text/csv" in response.headers["content-type"]
+    assert "attachment" in response.headers["content-disposition"]
+
+    body = response.text
+    assert "쿠팡 주문번호" in body
+    assert "순이익" in body
+    assert "ORDER-API-TEST-2" in body
+    assert "100000" in body  # ABC마트 매입가

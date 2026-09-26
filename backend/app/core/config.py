@@ -52,6 +52,11 @@ class Settings(BaseSettings):
     esm_master_id: str = ""
     esm_api_key: str = ""
 
+    # 지식재산권 침해 신고/내용증명을 남발해 계정정지 위험이 큰 브랜드 — 쉼표로 구분해
+    # 넣으면 크롤링 직후(등록 전) 자동으로 건너뛴다. "섹션 일괄 등록"으로 카테고리 전체를
+    # 긁을 때 특히 중요하다(PRD 9.1). 기본값은 비어있음 — 직접 채워야 필터가 동작한다.
+    blacklisted_brands: str = ""
+
     # --- RPA(무인발주) 관련 ---
     # scripts/save_abc_mart_session.py로 저장해둔 ABC마트 로그인 쿠키 파일 경로.
     abc_mart_session_file: str = "scripts/output/abc_mart_session.json"

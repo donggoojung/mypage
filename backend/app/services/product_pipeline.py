@@ -12,6 +12,7 @@ from decimal import Decimal
 
 import httpx
 
+from app.core.config import get_settings
 from app.core.database import SessionLocalSync
 from app.integrations.markets.coupang import (
     CoupangRegistrationError,
@@ -78,6 +79,23 @@ class PipelineError(RuntimeError):
     """파이프라인 5단계 중 한 곳이라도 실패하면 발생한다."""
 
 
+def _is_blacklisted_brand(brand_name: str, product_name: str) -> bool:
+    """PRD 9.1: 지재권 신고를 남발하는 브랜드를 등록 전에 걸러낸다.
+
+    settings.blacklisted_brands(쉼표 구분)에 값이 없으면 항상 통과시킨다 — 기본값은
+    필터를 켜지 않은 상태이므로, 실제로 막으려면 .env에 브랜드명을 채워야 한다.
+    브랜드명뿐 아니라 상품명에도 브랜드가 섞여 표기되는 경우가 있어(ABC마트 특성상)
+    둘 다 검사한다.
+    """
+    raw_blacklist = get_settings().blacklisted_brands
+    blacklist = [b.strip() for b in raw_blacklist.split(",") if b.strip()]
+    if not blacklist:
+        return False
+
+    haystack = f"{brand_name or ''} {product_name or ''}".lower()
+    return any(banned.lower() in haystack for banned in blacklist)
+
+
 async def run_pipeline_for_url(url: str, options: PipelineOptions | None = None) -> PipelineResult:
     """상품 URL 1개에 대해 [크롤링→마진계산→DB저장→AI이미지→쿠팡등록] 5단계를 전부 실행한다."""
     options = options or PipelineOptions()
@@ -89,6 +107,12 @@ async def run_pipeline_for_url(url: str, options: PipelineOptions | None = None)
 
     if not scraped.style_code or scraped.price <= 0:
         raise PipelineError(f"품번 또는 가격 추출 실패 (style_code={scraped.style_code!r}, price={scraped.price})")
+
+    if _is_blacklisted_brand(scraped.brand_name, scraped.product_name):
+        raise PipelineError(
+            f"금지 브랜드 목록에 포함된 상품이라 등록을 건너뜁니다 (브랜드: {scraped.brand_name!r}) — "
+            "지식재산권 침해 신고/계정정지 위험 방지를 위한 안전장치입니다(.env의 BLACKLISTED_BRANDS)."
+        )
 
     print(
         f"  브랜드={scraped.brand_name!r}, 상품명={scraped.product_name!r}, "

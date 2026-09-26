@@ -205,8 +205,12 @@
   <section class="card tab-panel" id="tab-orders">
     <div class="card-header-row">
       <h2>주문 현황</h2>
-      <button class="secondary" onclick="loadOrders()">새로고침</button>
+      <div class="row">
+        <a href="/api/orders/export.csv"><button class="secondary">엑셀 다운로드</button></a>
+        <button class="secondary" onclick="loadOrders()">새로고침</button>
+      </div>
     </div>
+    <p class="empty" style="margin-top:-6px">엑셀 다운로드 = 세무 신고(부가세/종합소득세)용 매입매출 내역(쿠팡 판매가/수수료/ABC마트 매입가/순이익)을 CSV로 내려받습니다.</p>
     <div id="orders-area"><p class="empty">불러오는 중...</p></div>
   </section>
 
