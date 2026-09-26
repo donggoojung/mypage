@@ -246,3 +246,43 @@ async def test_export_orders_csv_returns_expected_columns(client, db_session):
     assert "순이익" in body
     assert "ORDER-API-TEST-2" in body
     assert "100000" in body  # ABC마트 매입가
+
+
+@pytest.mark.asyncio
+async def test_registration_status_reports_remaining_count(client, monkeypatch):
+    """섹션 일괄 등록 탭의 [등록 가능 개수 확인] 버튼 — 남은 등록 가능 개수를 계산해 돌려준다."""
+
+    async def _fake_fetch_registration_status(self):
+        return {"vendorId": "A00123456", "restricted": False, "registeredCount": 8125, "permittedCount": 10000}
+
+    from app.api.routers import pipeline as pipeline_router
+
+    monkeypatch.setattr(
+        pipeline_router.CoupangWingClient, "fetch_registration_status", _fake_fetch_registration_status
+    )
+
+    response = await client.get("/api/pipeline/registration-status")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["registered_count"] == 8125
+    assert body["permitted_count"] == 10000
+    assert body["remaining_count"] == 1875
+    assert body["restricted"] is False
+
+
+@pytest.mark.asyncio
+async def test_registration_status_handles_unlimited_permitted_count(client, monkeypatch):
+    async def _fake_fetch_registration_status(self):
+        return {"vendorId": "A00123456", "restricted": False, "registeredCount": 4, "permittedCount": None}
+
+    from app.api.routers import pipeline as pipeline_router
+
+    monkeypatch.setattr(
+        pipeline_router.CoupangWingClient, "fetch_registration_status", _fake_fetch_registration_status
+    )
+
+    response = await client.get("/api/pipeline/registration-status")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["permitted_count"] is None
+    assert body["remaining_count"] is None

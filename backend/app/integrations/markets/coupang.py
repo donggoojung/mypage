@@ -63,6 +63,12 @@ RETURN_CANCELLATION_REQUESTS_PATH = "/v2/providers/openapi/apis/api/v6/vendors/{
 # "deliveryCompanyCode", "invoiceNumber", ...}]} 형태 — 정확한 필드명은 실API로
 # 재확인 필요(실API 미검증).
 SHIPMENT_INVOICE_PATH = "/v2/providers/openapi/apis/api/v4/vendors/{vendor_id}/orders/invoices"
+# 2026-09-26 웹검색으로 공식 문서 예시 응답까지 확인됨(실API 미검증) — "상품 등록 현황 조회".
+# 응답 예시: {"code":"SUCCESS","data":{"vendorId":"A00123456","restricted":false,
+# "registeredCount":8125,"permittedCount":10000}} — permittedCount가 null이면 등록 개수
+# 제한이 없다는 뜻. 대량(섹션 일괄) 등록 전에 지금 계정이 얼마나 더 등록 가능한지 미리
+# 확인해 무리한 대량등록으로 계정 제한/검수지연을 겪지 않게 하는 안전장치.
+SELLER_PRODUCT_REGISTRATION_STATUS_PATH = "/v2/providers/seller_api/apis/api/v1/marketplace/seller-products/inflow-status"
 CATEGORY_PREDICTION_PATH = "/v2/providers/openapi/apis/api/v1/categorization/predict"
 # 2026-09-22 웹검색으로 확인됨(실API 미검증 — 정확한 요청/응답 필드명은 실API로 재확인 필요):
 # 브랜드명 텍스트를 그대로 보내면(등록된 브랜드와 완전히 일치하지 않는 경우) "브랜드 ID가
@@ -743,6 +749,31 @@ class CoupangWingClient:
             path=path,
             access_key=self._settings.coupang_access_key,
             secret_key=self._settings.coupang_secret_key,
+        )
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.get(f"{COUPANG_API_HOST}{path}", headers=headers)
+            response.raise_for_status()
+            body = response.json()
+            return body.get("data", body)
+
+    async def fetch_registration_status(self) -> dict:
+        """지금 계정이 상품을 몇 개 등록했고, 몇 개까지 더 등록 가능한지 조회한다.
+
+        "섹션 일괄 등록"으로 대량 등록하기 전에 미리 확인해, 계정 제한을 모르고 무리하게
+        긁어 검수 지연/제한을 겪는 걸 방지한다 (파일 상단 경로 설명 참고).
+        """
+        if self._use_mock:
+            return self._mock_registration_status()
+        return await self._real_fetch_registration_status()
+
+    @staticmethod
+    def _mock_registration_status() -> dict:
+        return {"vendorId": "MOCK-VENDOR", "restricted": False, "registeredCount": 4, "permittedCount": None}
+
+    async def _real_fetch_registration_status(self) -> dict:
+        path = SELLER_PRODUCT_REGISTRATION_STATUS_PATH
+        headers = _build_authorization_header(
+            method="GET", path=path, access_key=self._settings.coupang_access_key, secret_key=self._settings.coupang_secret_key
         )
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.get(f"{COUPANG_API_HOST}{path}", headers=headers)

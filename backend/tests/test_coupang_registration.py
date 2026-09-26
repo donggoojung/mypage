@@ -590,3 +590,14 @@ async def test_fetch_return_requests_mock_returns_empty_list():
     result = await client.fetch_return_requests("VENDOR123")
 
     assert result == []
+
+
+async def test_fetch_registration_status_mock_returns_unlimited():
+    """Mock 모드에서는 등록 제한 없는 것으로 안전하게 응답한다."""
+    client = CoupangWingClient(use_mock=True)
+
+    result = await client.fetch_registration_status()
+
+    assert result["restricted"] is False
+    assert result["permittedCount"] is None
+    assert result["registeredCount"] >= 0

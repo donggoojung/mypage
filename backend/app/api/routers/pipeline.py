@@ -3,6 +3,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from app.core.celery_app import celery_app
+from app.integrations.markets.coupang import CoupangWingClient
 from app.workers.tasks.pipeline_tasks import (
     discover_category_urls_task,
     refresh_all_registered_products_task,
@@ -79,6 +80,24 @@ def discover_category(payload: DiscoverCategoryRequest) -> PipelineRunResponse:
     """대시보드의 "URL 목록 가져오기" 버튼 — 카테고리/랭킹 페이지에서 상품 URL만 수집한다(등록 안 함)."""
     task = discover_category_urls_task.delay(payload.category_url, payload.max_products, payload.max_pages)
     return PipelineRunResponse(task_id=task.id)
+
+
+@router.get("/registration-status")
+async def get_registration_status() -> dict:
+    """대시보드 "섹션 일괄 등록" 탭의 [등록 가능 개수 확인] 버튼 — 대량 등록 전에 지금
+    계정이 몇 개까지 더 등록 가능한지 미리 확인한다 (무리한 대량등록으로 검수지연/계정
+    제한을 겪지 않기 위한 안전장치).
+    """
+    client = CoupangWingClient()
+    status = await client.fetch_registration_status()
+    permitted_count = status.get("permittedCount")
+    registered_count = status.get("registeredCount", 0)
+    return {
+        "registered_count": registered_count,
+        "permitted_count": permitted_count,
+        "remaining_count": (permitted_count - registered_count) if permitted_count is not None else None,
+        "restricted": status.get("restricted", False),
+    }
 
 
 @router.get("/status/{task_id}")
