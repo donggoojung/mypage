@@ -185,9 +185,10 @@
 
   <section class="card tab-panel" id="tab-batch">
     <h2>섹션(카테고리) 일괄 등록</h2>
-    <p class="empty" style="margin-top:-10px">ABC마트 랭킹/카테고리 목록 페이지 URL을 넣으면 상품 URL을 자동으로 모아옵니다. 전체 사이트를 한 번에 긁지는 않고, 정해진 개수만 가져와 검토 후 등록합니다.</p>
+    <p class="empty" style="margin-top:-10px">ABC마트 랭킹/카테고리 목록 페이지 URL을 넣으면 상품 URL을 자동으로 모아옵니다. 전체 사이트를 한 번에 긁지는 않고, 정해진 개수만 가져와 검토 후 등록합니다. 랭킹 페이지 URL을 쓰면 <b>많이 팔린 순서 그대로</b> 가져와서 그 순서대로 등록됩니다.</p>
     <div class="row">
       <button class="secondary" onclick="checkRegistrationStatus()" id="check-status-btn">등록 가능 개수 확인</button>
+      <button class="secondary" onclick="fillBestRankingUrl()" id="fill-ranking-btn">ABC마트 베스트 랭킹 불러오기</button>
     </div>
     <div id="registration-status-box"></div>
     <div class="row" style="margin-top:14px">
@@ -426,6 +427,14 @@ async function checkRegistrationStatus() {
     box.className = "info-box show failure";
     box.textContent = "확인 실패: " + err.message;
   }
+}
+
+// ABC마트 실사이트로 확인된 베스트/판매 랭킹 페이지 — 이 페이지 자체가 이미 "많이
+// 팔린 순서"대로 상품을 보여주므로, 그대로 가져오면 등록도 그 순서대로 진행된다.
+const ABC_MART_BEST_RANKING_URL = "https://abcmart.a-rt.com/display/ranking/main";
+
+function fillBestRankingUrl() {
+  document.getElementById("category-url-input").value = ABC_MART_BEST_RANKING_URL;
 }
 
 async function discoverCategoryUrls() {
