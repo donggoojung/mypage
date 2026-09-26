@@ -7,7 +7,7 @@ from app.integrations.markets.coupang import CoupangWingClient
 from app.models.customer_order import CustomerOrder
 from app.models.enums import MarketType
 from app.models.master_product import MasterProduct
-from app.services.order_processor import process_new_order
+from app.services.order_processor import approve_and_complete_purchase, process_new_order
 from app.services.return_service import detect_cancellations_and_returns
 from app.services.shipment_service import ShipmentNotReadyError, confirm_shipment_for_order
 
@@ -80,6 +80,20 @@ def process_order(order_id: int, use_mock: bool | None = None) -> dict:
     """PRD 5.1~5.2: 주문 1건에 대해 최저가 소싱처를 판별하고 무인 발주를 완료한다."""
     with SessionLocalSync() as session:
         fulfillment = asyncio.run(process_new_order(session, order_id, use_mock=use_mock))
+        return {
+            "fulfillment_id": fulfillment.fulfillment_id,
+            "order_id": fulfillment.order_id,
+            "source_platform": fulfillment.source_platform.value,
+            "source_order_id": fulfillment.source_order_id,
+            "cost_paid": fulfillment.cost_paid,
+        }
+
+
+@celery_app.task(name="order_tasks.approve_order_payment")
+def approve_order_payment(order_id: int, use_mock: bool | None = None) -> dict:
+    """대시보드의 [결제 승인] 버튼 — PENDING_PAYMENT_APPROVAL 주문의 실제 결제를 이어서 완료한다."""
+    with SessionLocalSync() as session:
+        fulfillment = asyncio.run(approve_and_complete_purchase(session, order_id, use_mock=use_mock))
         return {
             "fulfillment_id": fulfillment.fulfillment_id,
             "order_id": fulfillment.order_id,

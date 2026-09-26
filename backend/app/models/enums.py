@@ -47,6 +47,11 @@ class OrderStatus(str, enum.Enum):
     # 자동 재시도하지 않고 여기서 멈춰서 관리자 텔레그램 알림과 함께 대기한다.
     HOLD = "hold"
     ORDER_PURCHASED = "order_purchased"
+    # 반자동 승인(PRD 5.2 안전장치 강화): RPA_CONFIRM_FINAL_PAYMENT=false(기본값)일 때, RPA가
+    # 배송지 입력까지 마치고 실제 결제 버튼 직전에서 멈추면 에러(HOLD)가 아니라 이 상태로
+    # 전환된다 — 대시보드에서 관리자가 가격/배송지를 눈으로 확인하고 [결제 승인]을 눌러야
+    # order_processor.approve_and_complete_purchase()가 실제 결제를 이어서 완료한다.
+    PENDING_PAYMENT_APPROVAL = "pending_payment_approval"
     SHIPPED = "shipped"
     DELIVERED = "delivered"
     CANCELLED = "cancelled"

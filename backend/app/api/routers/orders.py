@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends
+from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -6,8 +7,13 @@ from app.core.database import get_db
 from app.models.customer_order import CustomerOrder
 from app.models.master_product import MasterProduct
 from app.models.order_fulfillment import OrderFulfillment
+from app.workers.tasks.order_tasks import approve_order_payment
 
 router = APIRouter(prefix="/api/orders", tags=["orders"])
+
+
+class ApprovePaymentResponse(BaseModel):
+    task_id: str
 
 
 @router.get("")
@@ -41,3 +47,13 @@ async def list_orders(session: AsyncSession = Depends(get_db)) -> list[dict]:
             }
         )
     return output
+
+
+@router.post("/{order_id}/approve-payment", response_model=ApprovePaymentResponse)
+def approve_payment(order_id: int) -> ApprovePaymentResponse:
+    """대시보드의 [결제 승인] 버튼 — 즉시 응답하고 실제 RPA 결제는 Celery 워커가 백그라운드로 처리한다.
+
+    진행 상태는 기존 /api/pipeline/status/{task_id} (Celery task_id 범용 조회)로 폴링하면 된다.
+    """
+    task = approve_order_payment.delay(order_id)
+    return ApprovePaymentResponse(task_id=task.id)
