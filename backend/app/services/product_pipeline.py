@@ -20,6 +20,7 @@ from app.integrations.markets.coupang import (
     register_product_for_master_product,
     resolve_notice_info,
 )
+from app.integrations.markets.price_checker_factory import get_price_checker
 from app.integrations.scrapers.abc_mart import ABCMartScraper
 from app.models.enums import GenerationStatus, MarketType, SourcePlatform
 from app.models.generated_asset import GeneratedAsset
@@ -77,6 +78,46 @@ class PipelineResult:
 
 class PipelineError(RuntimeError):
     """파이프라인 5단계 중 한 곳이라도 실패하면 발생한다."""
+
+
+# 우리 판매가가 경쟁 최저가보다 이 비율(%) 이상 높으면 진단 로그로 눈에 띄게 남긴다 —
+# 자동으로 가격을 내리지는 않는다(대표님 결정: "일단 책정한 대로 하고, 가격 차이가
+# 너무 크게 나는 것만 따로 검토"). 대시보드 "등록된 상품" 표에서 경고 배지로도 보여준다.
+COMPETITOR_PRICE_GAP_WARNING_PERCENT = 20
+
+
+async def _check_coupang_competitor_price(
+    brand_name: str, product_name: str, selling_price: Decimal
+) -> tuple[int | None, Decimal | None]:
+    """쿠팡에 이미 등록된 경쟁 상품 수와 최저가를 조회한다 (부가 정보 — 실패해도 등록을 막지 않는다).
+
+    USE_MOCK_COUPANG_PRICE_CHECKER=true(기본값)면 Mock 응답을 쓴다. 실크롤러
+    (CoupangPriceChecker)는 아직 실사이트 셀렉터 미검증 상태이니, 실제로 켜서 쓰기 전에
+    scripts/test_scraper_margin.py --check-competitor로 먼저 눈으로 확인해야 한다.
+    """
+    try:
+        checker = get_price_checker(MarketType.COUPANG)
+        competitor = await checker.find_lowest_price(f"{brand_name} {product_name}".strip())
+    except Exception as exc:  # noqa: BLE001 - 부가 정보 조회 실패가 등록 전체를 막으면 안 된다.
+        print(f"  경쟁가 확인 실패({exc}) — 등록은 그대로 진행합니다.")
+        return None, None
+
+    if competitor is None:
+        print("  쿠팡 검색 결과에서 경쟁 상품을 찾지 못했습니다.")
+        return 0, None
+
+    competitor_price = Decimal(str(competitor.price))
+    gap_percent = float((selling_price - competitor_price) / competitor_price * 100) if competitor_price else 0.0
+    print(
+        f"  쿠팡 경쟁 상품 {competitor.competitor_count}개 발견, 최저가 {competitor_price:,.0f}원 "
+        f"(우리 판매가 대비 {gap_percent:+.0f}%)"
+    )
+    if gap_percent >= COMPETITOR_PRICE_GAP_WARNING_PERCENT:
+        print(
+            f"  ⚠️  경쟁 최저가보다 {gap_percent:.0f}% 높습니다 — 대시보드에서 이 상품 가격을 "
+            "따로 검토해주세요 (가격은 자동으로 조정하지 않았습니다)."
+        )
+    return competitor.competitor_count, competitor_price
 
 
 def _is_blacklisted_brand(brand_name: str, product_name: str) -> bool:
@@ -142,6 +183,13 @@ async def run_pipeline_for_url(url: str, options: PipelineOptions | None = None)
             f"  원가(정가) {purchase_cost:,.0f}원, 구간별 자동 목표마진율(최소 고정마진 1만원 보장) "
             f"→ 쿠팡 판매가 {selling_price:,}원"
         )
+
+    # --- [정보] 쿠팡 경쟁가 확인 — 가격을 자동으로 맞추지는 않고, 등록된 상품 목록에서
+    # 나중에 사람이 검토할 수 있도록 "경쟁 상품 수/최저가"만 같이 기록해둔다.
+    print("  쿠팡 경쟁가 확인 중...")
+    competitor_count, competitor_lowest_price = await _check_coupang_competitor_price(
+        scraped.brand_name, scraped.product_name, selling_price
+    )
 
     # --- [3/5] DB에 MasterProduct + SourceMapping upsert ---
     print("[3/5] DB에 상품 정보 저장 중...")
@@ -248,6 +296,8 @@ async def run_pipeline_for_url(url: str, options: PipelineOptions | None = None)
             selling_price,
             scraped.size_stock or {},
             options.request_approval,
+            competitor_count,
+            competitor_lowest_price,
         )
     except (ValueError, CoupangRegistrationError) as exc:
         raise PipelineError(f"쿠팡 등록 실패: {exc}") from exc
@@ -267,7 +317,15 @@ async def run_pipeline_for_url(url: str, options: PipelineOptions | None = None)
     )
 
 
-def _register_coupang_sync(product_id, display_category_code, selling_price, size_stock, request_approval):
+def _register_coupang_sync(
+    product_id,
+    display_category_code,
+    selling_price,
+    size_stock,
+    request_approval,
+    competitor_count=None,
+    competitor_lowest_price=None,
+):
     """register_product_for_master_product는 내부적으로 asyncio.run()을 쓰는 동기 함수라,
     이미 이벤트 루프가 돌고 있는 호출자(스크립트의 async main, 혹은 Celery 태스크가
     asyncio.run으로 감싼 코루틴) 안에서 직접 부르면
@@ -275,7 +333,7 @@ def _register_coupang_sync(product_id, display_category_code, selling_price, siz
     별도 스레드(asyncio.to_thread)에서 새 DB 세션과 함께 실행해 이 충돌을 피한다.
     """
     with SessionLocalSync() as session:
-        return register_product_for_master_product(
+        listing = register_product_for_master_product(
             session=session,
             product_id=product_id,
             display_category_code=display_category_code,
@@ -283,3 +341,7 @@ def _register_coupang_sync(product_id, display_category_code, selling_price, siz
             size_stock=size_stock,
             request_approval=request_approval,
         )
+        listing.competitor_count = competitor_count
+        listing.competitor_lowest_price = competitor_lowest_price
+        session.commit()
+        return listing

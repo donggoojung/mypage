@@ -13,6 +13,10 @@ class CompetitorListing:
     price: float
     product_url: str
     mall_name: str = ""
+    # 검색 결과에서 발견된 경쟁 리스팅 총 개수 — 등록 전 "이 상품 이미 몇 명이나 팔고
+    # 있는지" 판단용(PRD 참고, 가격 자체를 자동으로 맞추는 데는 쓰지 않는다).
+    # Naver 등 이 값을 아직 채우지 않는 구현은 기본값 0으로 남는다.
+    competitor_count: int = 0
 
 
 class BaseCompetitorPriceChecker(ABC):

@@ -46,7 +46,9 @@ def _patch_common(monkeypatch, fake_scraped_product):
 
     captured_category_code = {}
 
-    def _fake_register_coupang_sync(product_id, display_category_code, selling_price, size_stock, request_approval):
+    def _fake_register_coupang_sync(
+        product_id, display_category_code, selling_price, size_stock, request_approval, *args, **kwargs
+    ):
         captured_category_code["value"] = display_category_code
         return _FakeListing()
 

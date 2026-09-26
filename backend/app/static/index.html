@@ -542,20 +542,32 @@ async function loadProducts() {
     return;
   }
 
-  const rows = items.map(p => `
+  const rows = items.map(p => {
+    let competitorCell = "-";
+    if (p.competitor_count === 0) {
+      competitorCell = "경쟁상품 없음";
+    } else if (p.competitor_count) {
+      const gapText = p.competitor_gap_percent !== null ? ` (${p.competitor_gap_percent >= 0 ? "+" : ""}${p.competitor_gap_percent.toFixed(0)}%)` : "";
+      const isHighGap = p.competitor_gap_percent !== null && p.competitor_gap_percent >= 20;
+      competitorCell = `${p.competitor_count}개, 최저 ${fmtWon(p.competitor_lowest_price)}` +
+        (isHighGap ? `<br><span class="badge danger">우리가 ${gapText.trim()} 높음 — 검토필요</span>` : gapText);
+    }
+    return `
     <tr>
       <td>${p.thumbnail_url ? `<img class="thumb" src="${p.thumbnail_url}">` : "-"}</td>
       <td>${p.brand_name || "-"}</td>
       <td>${p.product_name || "-"}</td>
       <td>${p.style_code}</td>
       <td>${fmtWon(p.selling_price)}</td>
+      <td>${competitorCell}</td>
       <td>${p.listing_status ? `<span class="badge ${badgeClass(p.listing_status)}">${STATUS_LABELS[p.listing_status] || p.listing_status}</span>` : "-"}</td>
     </tr>
-  `).join("");
+  `;
+  }).join("");
 
   area.innerHTML = `
     <table>
-      <thead><tr><th>이미지</th><th>브랜드</th><th>상품명</th><th>품번</th><th>판매가</th><th>상태</th></tr></thead>
+      <thead><tr><th>이미지</th><th>브랜드</th><th>상품명</th><th>품번</th><th>판매가</th><th>쿠팡 경쟁가</th><th>상태</th></tr></thead>
       <tbody>${rows}</tbody>
     </table>
   `;

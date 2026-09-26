@@ -94,7 +94,9 @@ class CoupangPriceChecker(BaseCompetitorPriceChecker):
 
         if not listings:
             return None
-        return min(listings, key=lambda listing: listing.price)
+        cheapest = min(listings, key=lambda listing: listing.price)
+        cheapest.competitor_count = len(listings)
+        return cheapest
 
     @staticmethod
     def _parse_price(raw: str) -> float:
@@ -114,4 +116,5 @@ class MockCoupangPriceChecker(BaseCompetitorPriceChecker):
             product_title=f"[Mock 검색결과] {keyword}",
             price=self._fixed_price,
             product_url="https://www.coupang.com/vp/products/mock-1",
+            competitor_count=3,
         )

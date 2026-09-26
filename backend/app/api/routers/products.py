@@ -24,6 +24,14 @@ async def list_products(session: AsyncSession = Depends(get_db)) -> list[dict]:
             await session.execute(select(MarketListing).where(MarketListing.product_id == product.product_id))
         ).scalar_one_or_none()
 
+        competitor_gap_percent = None
+        if listing and listing.competitor_lowest_price:
+            competitor_gap_percent = (
+                (float(listing.selling_price) - float(listing.competitor_lowest_price))
+                / float(listing.competitor_lowest_price)
+                * 100
+            )
+
         output.append(
             {
                 "product_id": product.product_id,
@@ -34,6 +42,11 @@ async def list_products(session: AsyncSession = Depends(get_db)) -> list[dict]:
                 "selling_price": float(listing.selling_price) if listing else None,
                 "listing_status": listing.status.value if listing else None,
                 "market_product_id": listing.market_product_id if listing else None,
+                "competitor_count": listing.competitor_count if listing else None,
+                "competitor_lowest_price": float(listing.competitor_lowest_price)
+                if listing and listing.competitor_lowest_price is not None
+                else None,
+                "competitor_gap_percent": competitor_gap_percent,
             }
         )
     return output

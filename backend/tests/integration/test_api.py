@@ -286,3 +286,32 @@ async def test_registration_status_handles_unlimited_permitted_count(client, mon
     body = response.json()
     assert body["permitted_count"] is None
     assert body["remaining_count"] is None
+
+
+@pytest.mark.asyncio
+async def test_list_products_includes_competitor_price_info(client, db_session):
+    """등록된 상품 표 — 경쟁가 정보와 우리 가격 차이(%)가 같이 내려오는지 확인."""
+    product = MasterProduct(style_code="API-TEST-004", brand_name="테스트브랜드", product_name="테스트 운동화4")
+    db_session.add(product)
+    db_session.flush()
+
+    db_session.add(
+        MarketListing(
+            product_id=product.product_id,
+            market_type=MarketType.COUPANG,
+            market_product_id="87654321",
+            selling_price=120000,
+            status=ListingStatus.DRAFT,
+            competitor_count=4,
+            competitor_lowest_price=90000,
+        )
+    )
+    db_session.commit()
+
+    response = await client.get("/api/products")
+    assert response.status_code == 200
+    body = response.json()
+    assert len(body) == 1
+    assert body[0]["competitor_count"] == 4
+    assert body[0]["competitor_lowest_price"] == 90000.0
+    assert round(body[0]["competitor_gap_percent"]) == 33  # (120000-90000)/90000*100

@@ -26,5 +26,9 @@ class MarketListing(Base, TimestampMixin):
     # 승인(판매중) 전에는 쿠팡이 옵션ID를 아직 발급하지 않아 비어있다 — 재고/가격 동기화
     # (stop_selling_item 등)는 이 값이 채워진 뒤에만 가능하다.
     vendor_item_ids_json: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
+    # 등록 시점에 확인한 쿠팡 경쟁 상품 현황(정보용 — 이 값으로 selling_price를 자동
+    # 조정하지 않는다. 가격 차이가 큰 상품을 나중에 사람이 검토할 수 있게 남겨둔다).
+    competitor_count: Mapped[int | None] = mapped_column(nullable=True)
+    competitor_lowest_price: Mapped[float | None] = mapped_column(Numeric(10, 2), nullable=True)
 
     product: Mapped["MasterProduct"] = relationship(back_populates="market_listings")
