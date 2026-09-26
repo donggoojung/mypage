@@ -3,12 +3,14 @@
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
+from app.integrations.markets.coupang import CoupangWingClient
 from app.integrations.messaging.telegram_admin import TelegramAdminNotifier
 from app.integrations.rpa.base import REVIEW_ONLY_PREFIX, BaseRPAClient, ShippingInfo
 from app.integrations.rpa.factory import get_rpa_client
 from app.integrations.storage.s3_client import get_storage_client
 from app.models.customer_order import CustomerOrder
 from app.models.enums import OrderStatus
+from app.models.market_listing import MarketListing
 from app.models.master_product import MasterProduct
 from app.models.order_fulfillment import OrderFulfillment
 from app.services.sourcing_optimizer import find_cheapest_source
@@ -73,6 +75,7 @@ async def process_new_order(session: Session, order_id: int, use_mock: bool | No
         # 사람이 확인(대체 소싱처 수동 처리, 고객 취소/환불 등)하기 전에는 자동 재시도하지 않는다.
         order.status = OrderStatus.HOLD
         session.commit()
+        await _auto_stop_selling_on_hold(session, order, use_mock)
         await _notify_admin_of_hold(order, product, exc, use_mock)
         raise
 
@@ -138,6 +141,7 @@ async def approve_and_complete_purchase(session: Session, order_id: int, use_moc
     except Exception as exc:
         order.status = OrderStatus.HOLD
         session.commit()
+        await _auto_stop_selling_on_hold(session, order, use_mock)
         await _notify_admin_of_hold(order, product, exc, use_mock)
         raise
 
@@ -188,6 +192,38 @@ async def _notify_admin_pending_approval(
         print(f"  결제 승인 대기 알림 발송 실패({notify_exc}) — 주문 상태는 그대로 유지합니다.", flush=True)
 
 
+async def _auto_stop_selling_on_hold(session: Session, order: CustomerOrder, use_mock: bool | None) -> None:
+    """PRD 9.2 품절 패널티 방어 1단계: 매입 실패(품절/결제오류) 즉시 쿠팡에서 그 사이즈를
+    판매중지 처리해 추가 주문 유입을 막는다.
+
+    30분 주기 재고 동기화(crawl_tasks.refresh_all_source_mappings)를 기다리면 그 사이에도
+    같은 사유로 주문이 계속 들어와 문제가 커질 수 있어, HOLD로 멈추는 그 순간 바로
+    처리한다. 승인 전(DRAFT) 상품이라 vendorItemId가 아직 없으면 조용히 건너뛴다 —
+    부가 안전조치이므로 실패해도 이미 확정된 HOLD 전환 자체를 되돌리지 않는다.
+    """
+    try:
+        listing = (
+            session.query(MarketListing)
+            .filter_by(product_id=order.product_id, market_type=order.market_type)
+            .first()
+        )
+        if listing is None or not listing.vendor_item_ids_json:
+            return
+        vendor_item_id = listing.vendor_item_ids_json.get(order.ordered_size)
+        if not vendor_item_id:
+            return
+
+        client = CoupangWingClient(use_mock=use_mock)
+        await client.stop_selling_item(vendor_item_id)
+        print(
+            f"  [HOLD 안전조치] order_id={order.order_id} 사이즈 {order.ordered_size} "
+            "쿠팡 판매중지 처리 완료(추가 주문 유입 차단).",
+            flush=True,
+        )
+    except Exception as exc:  # noqa: BLE001 - 부가 안전조치 실패가 HOLD 전환 자체를 실패로 만들면 안 된다.
+        print(f"  HOLD 시 쿠팡 판매중지 자동처리 실패({exc}) — 관리자가 WING에서 직접 확인해야 합니다.", flush=True)
+
+
 async def _notify_admin_of_hold(
     order: CustomerOrder, product: MasterProduct, exc: Exception, use_mock: bool | None
 ) -> None:
@@ -199,6 +235,8 @@ async def _notify_admin_of_hold(
             f"쿠팡 주문번호: {order.market_order_id}\n"
             f"상품: {product.product_name} / 사이즈 {order.ordered_size} / 수량 {order.quantity}\n"
             f"사유: {exc}\n"
+            "해당 사이즈는 자동으로 쿠팡 판매중지 처리를 시도했습니다(추가 주문 유입 차단) — "
+            "WING에서 실제로 반영됐는지 확인해주세요.\n"
             "대시보드에서 확인 후 대체 소싱처 수동 처리 또는 고객 취소/환불을 진행해주세요."
         )
         await notifier.send_alert(text)
