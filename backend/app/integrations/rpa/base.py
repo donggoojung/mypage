@@ -65,3 +65,13 @@ class BaseRPAClient(ABC):
         호출부는 이 경우 나중에 다시 폴링해야 한다.
         """
         raise NotImplementedError
+
+    def get_last_receipt_screenshot(self) -> bytes | None:
+        """가장 최근 purchase_order() 호출에서 실제 결제가 완료됐을 때 캡처한 결제완료
+        화면 스크린샷(PNG 바이트)을 돌려준다 (PRD 9.1 지식재산권 분쟁 대응 — 정식 구매
+        영수증/증빙 자동 보관).
+
+        실제 결제를 하지 않는 클라이언트(Mock 등)는 기본값 None을 그대로 쓴다 — 캡처를
+        지원하는 구현(PlaywrightRPAClient)만 오버라이드한다.
+        """
+        return None

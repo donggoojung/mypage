@@ -28,6 +28,12 @@ class _FakeRPAClient:
             raise RPAPurchaseError("가짜 RPA 실패(테스트용)")
         if self._review_only:
             return f"{REVIEW_ONLY_PREFIX}-fake"
+        return await self._real_purchase(style_code, size)
+
+    def get_last_receipt_screenshot(self):
+        return None  # 테스트에서는 영수증 캡처를 검증하지 않는다.
+
+    async def _real_purchase(self, style_code, size):
         return f"REAL-{style_code}-{size}-999"
 
 

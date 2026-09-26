@@ -50,6 +50,7 @@ async def list_orders(session: AsyncSession = Depends(get_db)) -> list[dict]:
                 "source_platform": fulfillment.source_platform.value if fulfillment else None,
                 "cost_paid": float(fulfillment.cost_paid) if fulfillment and fulfillment.cost_paid is not None else None,
                 "tracking_no": fulfillment.tracking_no if fulfillment else None,
+                "receipt_url": fulfillment.receipt_url if fulfillment else None,
             }
         )
     return output
@@ -66,7 +67,7 @@ async def export_orders_csv(session: AsyncSession = Depends(get_db)) -> Streamin
     buffer.write("﻿")  # 엑셀이 한글을 깨지지 않게 읽도록 하는 UTF-8 BOM.
     writer = csv.writer(buffer)
     writer.writerow(
-        ["쿠팡 주문번호", "주문일", "상품명", "쿠팡 판매가", "쿠팡 수수료(추정)", "ABC마트 매입가", "순이익(추정)", "상태"]
+        ["쿠팡 주문번호", "주문일", "상품명", "쿠팡 판매가", "쿠팡 수수료(추정)", "ABC마트 매입가", "순이익(추정)", "상태", "매입 영수증"]
     )
 
     for order in orders:
@@ -93,6 +94,7 @@ async def export_orders_csv(session: AsyncSession = Depends(get_db)) -> Streamin
                 int(cost_paid) if cost_paid is not None else "",
                 int(net_profit) if net_profit is not None else "",
                 order.status.value,
+                fulfillment.receipt_url if fulfillment and fulfillment.receipt_url else "",
             ]
         )
 

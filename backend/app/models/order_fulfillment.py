@@ -19,5 +19,8 @@ class OrderFulfillment(Base, TimestampMixin):
     cost_paid: Mapped[float | None] = mapped_column(Numeric(10, 2), nullable=True)
     courier_code: Mapped[str | None] = mapped_column(String(32), nullable=True)
     tracking_no: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # PRD 9.1: 실제 결제가 완료된 순간의 소싱처 주문완료 화면 스크린샷 URL — 지식재산권
+    # 침해 신고/분쟁 시 "정식 구매했다"는 증빙으로 쓴다.
+    receipt_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
 
     order: Mapped["CustomerOrder"] = relationship(back_populates="fulfillments")

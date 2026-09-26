@@ -546,13 +546,14 @@ async function loadOrders() {
       <td>${o.source_platform ? `${o.source_platform} / ${fmtWon(o.cost_paid)}` : "-"}</td>
       <td><span class="badge ${badgeClass(o.status)}">${STATUS_LABELS[o.status] || o.status}</span></td>
       <td>${o.tracking_no || "-"}</td>
+      <td>${o.receipt_url ? `<a href="${o.receipt_url}" target="_blank" rel="noopener">영수증</a>` : "-"}</td>
       <td>${o.status === "pending_payment_approval" ? `<button onclick="approvePayment(${o.order_id})">결제 승인</button>` : ""}</td>
     </tr>
   `).join("");
 
   area.innerHTML = `
     <table>
-      <thead><tr><th>주문번호</th><th>상품</th><th>수취인</th><th>결제금액(고객)</th><th>소싱처/매입가</th><th>상태</th><th>운송장</th><th>처리</th></tr></thead>
+      <thead><tr><th>주문번호</th><th>상품</th><th>수취인</th><th>결제금액(고객)</th><th>소싱처/매입가</th><th>상태</th><th>운송장</th><th>영수증</th><th>처리</th></tr></thead>
       <tbody>${rows}</tbody>
     </table>
   `;

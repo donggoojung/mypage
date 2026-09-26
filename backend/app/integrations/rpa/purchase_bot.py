@@ -117,6 +117,11 @@ class PlaywrightRPAClient(BaseRPAClient):
         # 실제 서비스(order_processor.py)에서는 항상 False로 둬야 한다 — 사람이 없는 서버
         # 환경에서 켜두면 실패한 세션이 영원히 안 닫힌 채로 남는다.
         self._pause_on_error = pause_on_error
+        # PRD 9.1: 실제 결제가 완료된 순간의 주문완료 화면을 정식 구매 증빙으로 남겨둔다.
+        self._last_receipt_screenshot: bytes | None = None
+
+    def get_last_receipt_screenshot(self) -> bytes | None:
+        return self._last_receipt_screenshot
 
     async def purchase_order(
         self, style_code: str, size: str, shipping_info: ShippingInfo, confirm_final_payment: bool = False
@@ -438,6 +443,12 @@ class PlaywrightRPAClient(BaseRPAClient):
         body_text = await page.locator("body").inner_text(timeout=5000)
         match = ORDER_NUMBER_LABEL_PATTERN.search(body_text)
         if match:
+            # PRD 9.1: 실제로 돈이 나간 순간의 주문완료 화면(가격/상품/주문번호가 보이는
+            # 상태)을 정식 구매 증빙으로 캡처해둔다 — 지재권 분쟁/신고 대응용.
+            try:
+                self._last_receipt_screenshot = await page.screenshot(full_page=True)
+            except Exception as exc:  # noqa: BLE001 - 증빙 캡처 실패가 결제 성공 자체를 실패로 만들면 안 된다.
+                print(f"  결제완료 화면 캡처 실패({exc}) — 결제는 정상 완료된 상태로 계속 진행합니다.", flush=True)
             return match.group(1)
         raise RPAPurchaseError("결제 버튼은 눌렀지만 주문완료 화면에서 주문번호를 찾지 못했습니다 — 직접 확인이 필요합니다.")
 

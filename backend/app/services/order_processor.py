@@ -4,8 +4,9 @@ from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
 from app.integrations.messaging.telegram_admin import TelegramAdminNotifier
-from app.integrations.rpa.base import REVIEW_ONLY_PREFIX, ShippingInfo
+from app.integrations.rpa.base import REVIEW_ONLY_PREFIX, BaseRPAClient, ShippingInfo
 from app.integrations.rpa.factory import get_rpa_client
+from app.integrations.storage.s3_client import get_storage_client
 from app.models.customer_order import CustomerOrder
 from app.models.enums import OrderStatus
 from app.models.master_product import MasterProduct
@@ -85,6 +86,8 @@ async def process_new_order(session: Session, order_id: int, use_mock: bool | No
     order.status = OrderStatus.ORDER_PURCHASED
     session.commit()
 
+    _save_receipt_if_available(session, rpa_client, fulfillment)
+
     return fulfillment
 
 
@@ -144,7 +147,27 @@ async def approve_and_complete_purchase(session: Session, order_id: int, use_moc
     order.status = OrderStatus.ORDER_PURCHASED
     session.commit()
 
+    _save_receipt_if_available(session, rpa_client, pending_fulfillment)
+
     return pending_fulfillment
+
+
+def _save_receipt_if_available(session: Session, rpa_client: BaseRPAClient, fulfillment: OrderFulfillment) -> None:
+    """PRD 9.1: 실제 결제완료 화면 스크린샷이 있으면 스토리지에 올리고 URL을 저장한다.
+
+    캡처/업로드 실패가 이미 완료된 결제 처리 자체를 실패로 만들면 안 되므로, 부가 기능으로
+    취급해 예외를 삼킨다 — 증빙은 나중에 실제 반품 절차 등에서 필요할 때 다시 챙기면 된다.
+    """
+    screenshot = rpa_client.get_last_receipt_screenshot()
+    if screenshot is None:
+        return
+    try:
+        storage = get_storage_client()
+        key = f"receipts/{fulfillment.source_platform.value}/{fulfillment.source_order_id}.png"
+        fulfillment.receipt_url = storage.upload_bytes(screenshot, key=key, content_type="image/png")
+        session.commit()
+    except Exception as exc:  # noqa: BLE001
+        print(f"  결제 영수증 업로드 실패({exc}) — 매입 처리 결과는 그대로 유지합니다.", flush=True)
 
 
 async def _notify_admin_pending_approval(
