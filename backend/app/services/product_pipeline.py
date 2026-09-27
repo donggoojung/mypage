@@ -22,8 +22,9 @@ from app.integrations.markets.coupang import (
 )
 from app.integrations.markets.price_checker_factory import get_price_checker
 from app.integrations.scrapers.abc_mart import ABCMartScraper
-from app.models.enums import GenerationStatus, MarketType, SourcePlatform
+from app.models.enums import GenerationStatus, ListingStatus, MarketType, SourcePlatform
 from app.models.generated_asset import GeneratedAsset
+from app.models.market_listing import MarketListing
 from app.models.master_product import MasterProduct
 from app.models.source_mapping import SourceMapping
 from app.services.asset_pipeline import generate_product_assets
@@ -345,3 +346,66 @@ def _register_coupang_sync(
         listing.competitor_lowest_price = competitor_lowest_price
         session.commit()
         return listing
+
+
+def fix_barcode_info_for_draft_listings() -> dict:
+    """emptyBarcodeReason 버그(2026-09-27 수정)가 있던 시절에 등록해둔 임시저장 상품들을,
+    재크롤링/AI이미지 재생성 없이 로컬 DB에 이미 저장된 정보만으로 바로잡는다.
+
+    "전체 갱신"(run_pipeline_for_url 재실행)은 매번 새로 등록(POST)하기 때문에 이미
+    등록된 상품에 쓰면 중복 상품이 생긴다. 이 함수는 대신 각 상품을 PUT으로 전체수정해
+    기존 market_product_id(sellerProductId)를 그대로 유지한 채 바코드/모델번호 필드만
+    올바른 값으로 다시 채운다. 크롤링이나 AI 이미지 생성(유료 API) 비용도 들지 않는다 —
+    이미 SourceMapping/GeneratedAsset에 저장된 값을 그대로 재사용한다.
+    """
+    with SessionLocalSync() as session:
+        targets = [
+            (listing.listing_id, listing.product_id, listing.market_product_id, listing.selling_price)
+            for listing in session.query(MarketListing)
+            .filter_by(market_type=MarketType.COUPANG, status=ListingStatus.DRAFT)
+            .filter(MarketListing.market_product_id.isnot(None))
+            .all()
+        ]
+
+    succeeded: list[dict] = []
+    failed: list[dict] = []
+
+    for listing_id, product_id, market_product_id, selling_price in targets:
+        try:
+            with SessionLocalSync() as session:
+                mapping = (
+                    session.query(SourceMapping)
+                    .filter_by(product_id=product_id, source_platform=SourcePlatform.ABC_MART)
+                    .first()
+                )
+                if mapping is None or not mapping.size_stock_json:
+                    raise PipelineError("SourceMapping에 size_stock 정보가 없어 건너뜁니다.")
+
+                product = session.get(MasterProduct, product_id)
+                if product is None:
+                    raise PipelineError(f"product_id={product_id}인 master_products 행이 없습니다.")
+
+                try:
+                    display_category_code = asyncio.run(
+                        predict_display_category_code(f"{product.brand_name} {product.product_name}")
+                    )
+                except (CoupangRegistrationError, httpx.HTTPError):
+                    display_category_code = DEFAULT_DISPLAY_CATEGORY_CODE
+
+                listing = register_product_for_master_product(
+                    session=session,
+                    product_id=product_id,
+                    display_category_code=display_category_code,
+                    selling_price=Decimal(str(selling_price)),
+                    size_stock=mapping.size_stock_json,
+                    request_approval=False,
+                    existing_seller_product_id=market_product_id,
+                )
+                session.commit()
+            succeeded.append({"listing_id": listing_id, "market_product_id": listing.market_product_id})
+            print(f"  [{listing_id}] market_product_id={listing.market_product_id} 수정 완료")
+        except Exception as exc:  # noqa: BLE001 - 하나 실패해도 나머지 상품은 계속 처리한다.
+            failed.append({"listing_id": listing_id, "market_product_id": market_product_id, "error": str(exc)})
+            print(f"  [{listing_id}] 수정 실패: {exc}")
+
+    return {"total": len(targets), "succeeded": succeeded, "failed": failed}

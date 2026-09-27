@@ -254,6 +254,33 @@ def test_register_product_for_master_product_marks_active_when_approval_requeste
     assert listing.status == ListingStatus.ACTIVE
 
 
+def test_build_seller_product_payload_uses_valid_empty_barcode_reason():
+    """2026-09-27 실전 테스트에서 발견: emptyBarcodeReason은 임의 문구가 아니라 쿠팡
+    "상품 일괄등록(엑셀)" 양식이 정한 5개 고정 문구 중 하나여야 승인요청이 통과된다."""
+    payload = build_seller_product_payload(_sample_input(), SAMPLE_SELLER_INFO)
+
+    valid_reasons = {
+        "[바코드없음]온라인 판매를 위한 소규모 제작 상품임",
+        "[바코드없음]주문 제작으로 유통하는 상품임",
+        "[바코드없음]색상이 다르지만 바코드가 동일한 상품임",
+        "[바코드없음]국내외 표준 바코드가 아닌 상품임",
+        "[바코드없음]제조사에서 바코드를 제공 받지 못함",
+    }
+    for item in payload["items"]:
+        assert item["emptyBarcodeReason"] in valid_reasons
+
+
+@pytest.mark.asyncio
+async def test_update_product_mock_keeps_same_seller_product_id():
+    client = CoupangWingClient(use_mock=True)
+    payload = build_seller_product_payload(_sample_input(), SAMPLE_SELLER_INFO)
+
+    response = await client.update_product("77777777", payload)
+
+    assert response["code"] == "SUCCESS"
+    assert response["data"] == "77777777"
+
+
 def test_register_product_for_master_product_upserts_on_second_call(sample_product_with_asset, db_session):
     first = register_product_for_master_product(
         session=db_session,
@@ -276,6 +303,25 @@ def test_register_product_for_master_product_upserts_on_second_call(sample_produ
 
     assert first.listing_id == second.listing_id  # 새로 생성이 아니라 기존 행을 갱신
     assert second.selling_price == Decimal("199000")
+
+
+def test_register_product_for_master_product_with_existing_id_updates_in_place(sample_product_with_asset, db_session):
+    """existing_seller_product_id를 주면 새로 등록(POST)하지 않고, 그 ID 그대로 PUT
+    수정해야 한다 — 코드 버그를 나중에 고쳤을 때 이미 등록된 임시저장 상품을 중복
+    생성 없이 바로잡는 용도(90개 임시저장 상품 일괄수정 기능)."""
+    listing = register_product_for_master_product(
+        session=db_session,
+        product_id=sample_product_with_asset.product_id,
+        display_category_code=56137,
+        selling_price=Decimal("199000"),
+        size_stock=SAMPLE_SIZE_STOCK,
+        use_mock=True,
+        vendor_id="A00123456",
+        existing_seller_product_id="99998888",
+    )
+
+    assert listing.market_product_id == "99998888"
+    assert listing.status == ListingStatus.DRAFT
 
 
 # --- 5. 출고지/반품지 자동조회 검증 -------------------------------------------

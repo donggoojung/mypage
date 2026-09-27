@@ -6,6 +6,7 @@ from app.core.celery_app import celery_app
 from app.integrations.markets.coupang import CoupangWingClient
 from app.workers.tasks.pipeline_tasks import (
     discover_category_urls_task,
+    fix_barcode_info_for_draft_listings_task,
     refresh_all_registered_products_task,
     run_pipeline_for_url_task,
     run_pipeline_for_urls_task,
@@ -46,6 +47,16 @@ def refresh_all_pipeline() -> PipelineRunResponse:
     URL을 일일이 다시 넣지 않고 한 번의 클릭으로 전부 최신화할 수 있게 해준다.
     """
     task = refresh_all_registered_products_task.delay()
+    return PipelineRunResponse(task_id=task.id)
+
+
+@router.post("/fix-barcode-info", response_model=PipelineRunResponse)
+def fix_barcode_info() -> PipelineRunResponse:
+    """대시보드의 "임시저장 상품 바코드정보 일괄수정" 버튼 — 2026-09-27 emptyBarcodeReason
+    버그가 있던 시절에 등록해둔 임시저장 상품들을, 재크롤링/이미지 재생성 없이 PUT
+    전체수정으로 중복 없이 바로잡는다 ("전체 갱신"과 달리 새 상품을 만들지 않는다).
+    """
+    task = fix_barcode_info_for_draft_listings_task.delay()
     return PipelineRunResponse(task_id=task.id)
 
 

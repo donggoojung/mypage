@@ -6,7 +6,12 @@ from app.core.database import SessionLocalSync
 from app.integrations.scrapers.abc_mart import ABCMartScraper
 from app.models.enums import SourcePlatform
 from app.models.source_mapping import SourceMapping
-from app.services.product_pipeline import PipelineOptions, PipelineResult, run_pipeline_for_url
+from app.services.product_pipeline import (
+    PipelineOptions,
+    PipelineResult,
+    fix_barcode_info_for_draft_listings,
+    run_pipeline_for_url,
+)
 
 
 def _options_from_dict(options: dict | None) -> PipelineOptions:
@@ -95,6 +100,16 @@ def refresh_all_registered_products_task(self, options: dict | None = None) -> d
             if row.source_url
         ]
     return _run_pipeline_for_urls(self, urls, options)
+
+
+@celery_app.task(name="pipeline_tasks.fix_barcode_info_for_draft_listings", bind=True)
+def fix_barcode_info_for_draft_listings_task(self) -> dict:
+    """대시보드의 "임시저장 상품 바코드정보 일괄수정" 버튼 — 2026-09-27 emptyBarcodeReason
+    버그가 있던 시절에 등록해둔 임시저장 상품들을, 재크롤링/이미지 재생성 없이 PUT
+    전체수정으로 중복 없이 바로잡는다.
+    """
+    self.update_state(state="PROGRESS", meta={"step": "임시저장 상품 바코드정보 일괄수정 중..."})
+    return fix_barcode_info_for_draft_listings()
 
 
 @celery_app.task(name="pipeline_tasks.discover_category_urls", bind=True)

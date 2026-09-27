@@ -175,11 +175,13 @@
       <h2>등록된 상품</h2>
       <div class="row">
         <button class="secondary" onclick="refreshAllProducts()" id="refresh-all-btn">전체 갱신</button>
+        <button class="secondary" onclick="fixBarcodeInfo()" id="fix-barcode-btn">임시저장 상품 바코드정보 일괄수정</button>
         <button class="secondary" onclick="loadProducts()">새로고침</button>
       </div>
     </div>
-    <p class="empty" style="margin-top:-6px">"전체 갱신" = 이미 등록된 상품 전부를 저장된 URL로 다시 크롤링/등록해 최신 코드 기준으로 맞춥니다.</p>
+    <p class="empty" style="margin-top:-6px">"전체 갱신" = 이미 등록된 상품 전부를 저장된 URL로 다시 크롤링/등록해 최신 코드 기준으로 맞춥니다. "임시저장 상품 바코드정보 일괄수정" = 재크롤링 없이, 예전 바코드 사유 버그로 승인이 막혀있던 임시저장 상품들만 중복 없이 바로잡습니다.</p>
     <div id="refresh-all-status"></div>
+    <div id="fix-barcode-status"></div>
     <div id="products-area"><p class="empty">불러오는 중...</p></div>
   </section>
 
@@ -396,6 +398,39 @@ async function refreshAllProducts() {
     onSuccess: (r) => {
       statusBox.textContent = `전체 갱신 완료: 총 ${r.total}건 중 성공 ${r.succeeded.length}건 / 실패 ${r.failed.length}건`;
       if (r.failed.length) statusBox.textContent += "\n\n실패 목록:\n" + r.failed.map(f => `- ${f.url}: ${f.error}`).join("\n");
+      btn.disabled = false;
+      loadProducts();
+    },
+    onFailure: () => { btn.disabled = false; },
+  });
+}
+
+async function fixBarcodeInfo() {
+  const btn = document.getElementById("fix-barcode-btn");
+  const statusBox = document.getElementById("fix-barcode-status");
+
+  if (!confirm("임시저장 상품 중 바코드정보가 잘못된 것들을 재크롤링 없이 일괄 수정합니다(중복 생성 없음). 계속할까요?")) return;
+
+  btn.disabled = true;
+  statusBox.className = "info-box show pending";
+  statusBox.textContent = "요청을 보냈습니다...";
+
+  let taskId;
+  try {
+    const res = await fetch("/api/pipeline/fix-barcode-info", { method: "POST" });
+    if (!res.ok) throw new Error(`서버 오류 (${res.status})`);
+    taskId = (await res.json()).task_id;
+  } catch (err) {
+    statusBox.className = "info-box show failure";
+    statusBox.textContent = "요청 실패: " + err.message;
+    btn.disabled = false;
+    return;
+  }
+
+  pollTask(taskId, statusBox, {
+    onSuccess: (r) => {
+      statusBox.textContent = `바코드정보 일괄수정 완료: 총 ${r.total}건 중 성공 ${r.succeeded.length}건 / 실패 ${r.failed.length}건`;
+      if (r.failed.length) statusBox.textContent += "\n\n실패 목록:\n" + r.failed.map(f => `- listing_id ${f.listing_id}: ${f.error}`).join("\n");
       btn.disabled = false;
       loadProducts();
     },

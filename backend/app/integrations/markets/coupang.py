@@ -319,6 +319,20 @@ class CoupangWingClient:
             return self._mock_register(payload)
         return await self._real_register(payload)
 
+    async def update_product(self, seller_product_id: str, payload: dict) -> dict:
+        """이미 등록된 상품(임시저장 포함)을 새로 만들지 않고 PUT으로 전체수정한다.
+
+        쿠팡의 "상품 부분수정" API는 승인 완료(판매중) 상품에만 지원되고 임시저장
+        상품에는 쓸 수 없어(실API 확인됨), 코드 버그를 나중에 고쳐서 예전에 등록해둔
+        임시저장 상품들을 바로잡아야 할 때는 이 전체수정(PUT) 방식을 쓴다 — 같은
+        sellerProductId를 그대로 유지하므로 중복 상품이 생기지 않는다. 실API 미검증.
+        """
+        self._validate_payload(payload)
+
+        if self._use_mock:
+            return {"code": "SUCCESS", "message": "(Mock) 상품이 수정되었습니다.", "data": seller_product_id}
+        return await self._real_update(seller_product_id, payload)
+
     @staticmethod
     def _validate_payload(payload: dict) -> None:
         """실제 API 호출 전, 필수 필드가 빠지지 않았는지 최소한으로 검증한다."""
@@ -359,6 +373,19 @@ class CoupangWingClient:
             response = await client.post(
                 f"{COUPANG_API_HOST}{PRODUCT_REGISTRATION_PATH}", headers=headers, json=payload
             )
+            response.raise_for_status()
+            return response.json()
+
+    async def _real_update(self, seller_product_id: str, payload: dict) -> dict:
+        path = SELLER_PRODUCT_DETAIL_PATH.format(seller_product_id=seller_product_id)
+        headers = _build_authorization_header(
+            method="PUT",
+            path=path,
+            access_key=self._settings.coupang_access_key,
+            secret_key=self._settings.coupang_secret_key,
+        )
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.put(f"{COUPANG_API_HOST}{path}", headers=headers, json=payload)
             response.raise_for_status()
             return response.json()
 
@@ -1046,6 +1073,7 @@ def register_product_for_master_product(
     vendor_id: str | None = None,
     seller_info: dict | None = None,
     request_approval: bool = False,
+    existing_seller_product_id: str | None = None,
 ) -> MarketListing:
     """master_products 1건을 쿠팡에 등록(또는 Mock 검증)하고 market_listings에 결과를 저장한다.
 
@@ -1056,6 +1084,9 @@ def register_product_for_master_product(
     `request_approval=False`(기본값)면 쿠팡에 임시저장만 되고 실제 판매 심사요청은 나가지
     않는다 — 실계정으로 처음 테스트할 때는 반드시 기본값(False)으로 두고, WING 판매자센터에서
     등록된 내용을 눈으로 확인한 뒤에만 True로 바꿔 승인요청을 보낸다.
+    `existing_seller_product_id`를 지정하면 새로 등록(POST)하지 않고, 이미 쿠팡에 있는
+    그 상품을 PUT으로 전체수정한다 — 코드 버그(예: emptyBarcodeReason)를 나중에 고쳤을 때,
+    이미 임시저장돼있던 상품들을 중복생성 없이 같은 sellerProductId 그대로 바로잡는 용도다.
     """
     settings = get_settings()
     vendor_id = vendor_id or settings.coupang_vendor_id
@@ -1156,8 +1187,13 @@ def register_product_for_master_product(
         )
         return build_seller_product_payload(payload_input, seller_info)
 
+    def _submit(payload: dict) -> dict:
+        if existing_seller_product_id:
+            return asyncio.run(client.update_product(existing_seller_product_id, payload))
+        return asyncio.run(client.register_product(payload))
+
     payload = _build_payload(brand_id, brand_field_override)
-    response = asyncio.run(client.register_product(payload))
+    response = _submit(payload)
 
     if response.get("code") != "SUCCESS" and "브랜드" in str(response.get("message", "")):
         # 브랜드 검색으로 못 찾았거나(brand_id=None) 찾은 값이 여전히 거부되면,
@@ -1166,17 +1202,18 @@ def register_product_for_master_product(
         # 노출상품명에 이미 들어있어 정보 손실 없음). 실API 미검증 — 결과를 보고 판단해야 한다.
         print(f"  브랜드 검증 실패({response.get('message')}) — '브랜드 없음'으로 재시도합니다.")
         payload = _build_payload(None, NO_BRAND_FALLBACK)
-        response = asyncio.run(client.register_product(payload))
+        response = _submit(payload)
 
     if response.get("code") != "SUCCESS":
-        raise CoupangRegistrationError(f"쿠팡 상품 등록 실패: {response}")
+        action = "수정" if existing_seller_product_id else "등록"
+        raise CoupangRegistrationError(f"쿠팡 상품 {action} 실패: {response}")
 
     listing = session.query(MarketListing).filter_by(product_id=product_id, market_type=MarketType.COUPANG).first()
     if listing is None:
         listing = MarketListing(product_id=product_id, market_type=MarketType.COUPANG)
         session.add(listing)
 
-    listing.market_product_id = str(response["data"])
+    listing.market_product_id = str(existing_seller_product_id or response["data"])
     listing.selling_price = selling_price
     # request_approval=False로 등록하면 쿠팡 쪽엔 임시저장 상태로만 들어가므로,
     # 우리 DB 상태도 실제 판매중(ACTIVE)이 아니라 임시저장(DRAFT)으로 맞춰야 한다 —
