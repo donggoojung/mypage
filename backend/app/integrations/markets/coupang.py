@@ -227,7 +227,12 @@ def build_seller_product_payload(data: CoupangProductInput, seller_info: dict) -
                 "pccNeeded": False,
                 "externalVendorSku": f"{data.style_code}-{size}",
                 "emptyBarcode": True,
-                "emptyBarcodeReason": "상품 특성상 바코드 없음",
+                # 2026-09-27 사용자가 WING "상품 일괄등록(엑셀)" 양식에서 직접 확인:
+                # emptyBarcodeReason은 자유 문구가 아니라 쿠팡이 정한 5개 고정 문구 중 하나여야
+                # 한다. 임의 문구("상품 특성상 바코드 없음")를 보내면 쿠팡이 무효값으로 처리해
+                # 바코드는 물론 모델번호까지 빈칸으로 남아 "옵션 항목을 확인해주세요" 승인 거부가
+                # 났다 — ABC마트 재판매 특성상 "제조사에서 바코드를 제공받지 못함" 사유가 맞다.
+                "emptyBarcodeReason": "[바코드없음]제조사에서 바코드를 제공 받지 못함",
                 "modelNo": data.style_code,
                 "searchTags": [data.brand_name, data.product_name],
                 "images": [
