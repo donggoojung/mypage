@@ -26,7 +26,7 @@ import httpx
 from sqlalchemy.orm import Session
 
 from app.core.config import Settings, get_settings
-from app.integrations.llm.gemini_client import GeminiClient
+from app.integrations.llm.gemini_client import GeminiClient, clean_search_tags
 from app.models.enums import ListingStatus, MarketType
 from app.models.generated_asset import GeneratedAsset
 from app.models.market_listing import MarketListing
@@ -181,6 +181,13 @@ class CoupangProductInput:
     # sellerProductName/displayProductName에 그대로 쓰고, 없으면(조회 실패 등)
     # 기존처럼 brand_name+product_name+style_code를 이어붙인 값으로 폴백한다.
     seo_title: str | None = None
+    # Gemini(GeminiClient.generate_search_tags)가 만든 쿠팡 검색태그. 비어있으면
+    # 기존처럼 [브랜드명, 상품명] 2개만 보낸다.
+    search_tags: tuple[str, ...] = ()
+
+
+def _build_search_tags(brand_name: str, product_name: str, extra_tags: tuple[str, ...]) -> list[str]:
+    return clean_search_tags([brand_name, product_name, *extra_tags])
 
 
 def build_seller_product_payload(data: CoupangProductInput, seller_info: dict) -> dict:
@@ -234,7 +241,7 @@ def build_seller_product_payload(data: CoupangProductInput, seller_info: dict) -
                 # 났다 — ABC마트 재판매 특성상 "제조사에서 바코드를 제공받지 못함" 사유가 맞다.
                 "emptyBarcodeReason": "[바코드없음]제조사에서 바코드를 제공 받지 못함",
                 "modelNo": data.style_code,
-                "searchTags": [data.brand_name, data.product_name],
+                "searchTags": _build_search_tags(data.brand_name, data.product_name, data.search_tags),
                 "images": [
                     {"imageOrder": 0, "imageType": "REPRESENTATION", "cdnPath": data.thumbnail_image_url},
                     {"imageOrder": 1, "imageType": "DETAIL", "cdnPath": data.detail_image_url},
@@ -1095,6 +1102,23 @@ def register_product_for_master_product(
     if product is None:
         raise ValueError(f"product_id={product_id} 인 master_products 행이 없습니다.")
 
+    # 중복 등록 방지: 같은 상품을 다시 등록하면(같은 URL 재입력, "전체 갱신" 등) 쿠팡에
+    # 새 상품이 하나 더 생기던 문제를 막는다.
+    existing_listing = (
+        session.query(MarketListing).filter_by(product_id=product_id, market_type=MarketType.COUPANG).first()
+    )
+    if existing_seller_product_id is None and existing_listing and existing_listing.market_product_id:
+        if existing_listing.status != ListingStatus.DRAFT:
+            # 판매중/품절/중지 상품을 전체수정하면 쿠팡 재심사로 판매가 멈출 수 있다 —
+            # 가격/재고는 sync_stock_and_price_to_coupang가 따로 반영하므로 여기선 건너뛴다.
+            print(
+                f"  이미 쿠팡에 등록된 상품(상태={existing_listing.status.value}, "
+                f"ID={existing_listing.market_product_id}) — 중복 등록하지 않고 건너뜁니다."
+            )
+            return existing_listing
+        existing_seller_product_id = existing_listing.market_product_id
+        print(f"  이미 임시저장된 상품(ID={existing_seller_product_id}) — 새로 등록하지 않고 수정합니다.")
+
     asset = session.query(GeneratedAsset).filter_by(product_id=product_id).first()
     if asset is None or not asset.ai_thumbnail_url or not asset.ai_detail_image_url:
         raise ValueError(
@@ -1155,6 +1179,19 @@ def register_product_for_master_product(
         seo_title = None
         print(f"  Gemini SEO 상품명 생성 실패({exc}) — 기존 방식(브랜드+상품명+품번)으로 등록합니다.")
 
+    try:
+        search_tags = tuple(
+            asyncio.run(
+                GeminiClient(settings=settings).generate_search_tags(
+                    brand=product.brand_name, raw_title=product.product_name, category=notice_category_name
+                )
+            )
+        )
+        print(f"  [진단] AI 검색태그: {list(search_tags)}", flush=True)
+    except Exception as exc:  # noqa: BLE001 - 부가 기능(검색태그)이 등록 전체를 막으면 안 된다.
+        search_tags = ()
+        print(f"  AI 검색태그 생성 실패({exc}) — 브랜드명+상품명만 태그로 등록합니다.")
+
     brand_id = None
     brand_field_override = None
     try:
@@ -1182,6 +1219,7 @@ def register_product_for_master_product(
             notice_category_name=notice_category_name,
             notice_detail_keys=tuple(notice_detail_keys),
             seo_title=seo_title,
+            search_tags=search_tags,
             brand_id=brand_id_value,
             brand_field_override=brand_field_value,
         )

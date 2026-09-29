@@ -186,3 +186,34 @@ async def test_summarize_product_specs_real_api_returns_dict():
     print(f"\n[실API] 요약된 스펙: {specs!r}")
     assert isinstance(specs, dict)
     assert specs
+
+
+# --- 검색태그(키워드) 생성 ---------------------------------------------------
+
+
+def test_clean_search_tags_filters_promo_words_special_chars_and_duplicates():
+    from app.integrations.llm.gemini_client import MAX_SEARCH_TAGS, clean_search_tags
+
+    tags = clean_search_tags(["남성러닝화", "남성러닝화", "최저가 운동화", "정품 나이키", "가벼운-운동화!", ""])
+
+    assert tags == ["남성러닝화", "가벼운운동화"]
+    assert len(clean_search_tags([f"태그{i}" for i in range(50)])) == MAX_SEARCH_TAGS
+
+
+def test_clean_search_tags_truncates_long_tags():
+    from app.integrations.llm.gemini_client import MAX_SEARCH_TAG_LENGTH, clean_search_tags
+
+    tags = clean_search_tags(["아주아주아주아주아주아주아주아주긴키워드입니다"])
+
+    assert len(tags[0]) <= MAX_SEARCH_TAG_LENGTH
+
+
+@pytest.mark.asyncio
+async def test_mock_generate_search_tags_returns_clean_tags():
+    client = GeminiClient(settings=_mock_settings())
+
+    tags = await client.generate_search_tags(brand="나이키", raw_title="나이키 레볼루션 8", category="운동화")
+
+    assert tags
+    assert "운동화" in tags
+    assert "나이키" not in tags  # 브랜드명은 쿠팡 등록 시 따로 맨 앞에 넣는다

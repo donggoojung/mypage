@@ -22,6 +22,24 @@ REQUIRED_SPEC_KEYS = ("소재", "색상", "굽높이", "제조자(수입자)", "
 
 MAX_SEO_TITLE_LENGTH = 50
 
+# 쿠팡 검색태그 제한(실API 미검증 — 판매자센터 안내 기준): 최대 20개, 태그당 20자 이내.
+MAX_SEARCH_TAGS = 20
+MAX_SEARCH_TAG_LENGTH = 20
+# AI가 규칙을 어기고 넣을 수 있는 홍보성 문구 — 쿠팡이 검색어 남용으로 볼 수 있어 걸러낸다.
+_BANNED_TAG_WORDS = ("최저가", "무료배송", "정품", "특가", "할인", "사은품", "당일발송")
+_ALLOWED_TAG_CHARS = re.compile(r"[^가-힣A-Za-z0-9 ]")
+
+
+def clean_search_tags(tags: list[str]) -> list[str]:
+    """특수문자/홍보문구/중복을 걸러내고 쿠팡 제한(개수·길이)에 맞춘다."""
+    cleaned: list[str] = []
+    for tag in tags:
+        tag = _ALLOWED_TAG_CHARS.sub("", tag or "").strip()[:MAX_SEARCH_TAG_LENGTH].strip()
+        if not tag or any(word in tag for word in _BANNED_TAG_WORDS) or tag in cleaned:
+            continue
+        cleaned.append(tag)
+    return cleaned[:MAX_SEARCH_TAGS]
+
 
 class GeminiClientError(RuntimeError):
     """Gemini 호출 또는 응답 파싱이 실패했을 때 발생한다."""
@@ -95,6 +113,49 @@ class GeminiClient:
             raise GeminiClientError(f"Gemini 응답에서 제목을 추출하지 못했습니다: {raw_text!r}")
         return title[:MAX_SEO_TITLE_LENGTH]
 
+    # --- 1-2) 검색태그(키워드) 생성 -----------------------------------------
+
+    async def generate_search_tags(self, brand: str, raw_title: str, category: str) -> list[str]:
+        """쿠팡 검색태그용 키워드 목록을 만든다 (고객이 실제로 검색할 법한 단어 위주)."""
+        if self._use_mock:
+            return _mock_generate_search_tags(brand, raw_title, category)
+        return await self._real_generate_search_tags(brand, raw_title, category)
+
+    async def _real_generate_search_tags(self, brand: str, raw_title: str, category: str) -> list[str]:
+        from google.genai import types
+
+        prompt = (
+            "너는 쿠팡 검색 키워드 전문가다. 아래 상품을 고객이 쿠팡에서 찾을 때 실제로 "
+            "검색창에 칠 법한 키워드를 JSON 문자열 배열 하나로만 답해라(설명 없이 JSON만).\n\n"
+            f"브랜드: {brand}\n상품명: {raw_title}\n카테고리: {category}\n\n"
+            "규칙:\n"
+            f"- 최대 {MAX_SEARCH_TAGS}개, 각 키워드는 공백 포함 {MAX_SEARCH_TAG_LENGTH}자 이내\n"
+            "- 용도/대상/특징/스타일 키워드 위주 (예: 남성러닝화, 가벼운운동화, 데일리스니커즈)\n"
+            "- 이 상품의 브랜드가 아닌 다른 브랜드명은 절대 넣지 마라 (쿠팡 키워드 어뷰징 제재 대상)\n"
+            "- 상품과 무관한 인기 검색어, 최저가/무료배송/정품 같은 과장·홍보 문구, 특수문자 금지"
+        )
+        try:
+            response = await self._sdk_client.aio.models.generate_content(
+                model=self._settings.gemini_model,
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    temperature=0.3,
+                    max_output_tokens=1024,
+                    response_mime_type="application/json",
+                    thinking_config=types.ThinkingConfig(thinking_budget=0),
+                ),
+            )
+        except Exception as exc:  # noqa: BLE001
+            raise GeminiClientError(f"Gemini 검색태그 생성 실패: {exc}") from exc
+
+        try:
+            parsed = json.loads(response.text or "")
+        except (TypeError, json.JSONDecodeError) as exc:
+            raise GeminiClientError(f"Gemini 검색태그 응답이 유효한 JSON이 아닙니다: {response.text!r}") from exc
+        if not isinstance(parsed, list):
+            raise GeminiClientError(f"Gemini 검색태그 응답이 배열이 아닙니다: {parsed!r}")
+        return clean_search_tags([str(tag) for tag in parsed])
+
     # --- 2) 상세 스펙 요약 -------------------------------------------------
 
     async def summarize_product_specs(self, raw_description_text: str) -> dict:
@@ -153,6 +214,12 @@ def _mock_generate_seo_title(brand: str, raw_title: str, style_code: str, catego
     parts = [f"[{brand}]" if brand else "", title, style_code or "", category or ""]
     result = " ".join(p.strip() for p in parts if p and p.strip())
     return result[:MAX_SEO_TITLE_LENGTH].strip()
+
+
+def _mock_generate_search_tags(brand: str, raw_title: str, category: str) -> list[str]:
+    words = [w for w in (raw_title or "").split() if w != brand]
+    tags = [category, f"{brand}{category}" if brand and category else "", *words]
+    return clean_search_tags(tags)
 
 
 def _mock_summarize_product_specs(raw_description_text: str) -> dict:

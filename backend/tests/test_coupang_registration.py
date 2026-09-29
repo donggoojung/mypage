@@ -303,6 +303,46 @@ def test_register_product_for_master_product_upserts_on_second_call(sample_produ
 
     assert first.listing_id == second.listing_id  # 새로 생성이 아니라 기존 행을 갱신
     assert second.selling_price == Decimal("199000")
+    # 쿠팡에도 새 상품을 만들지 않고 같은 sellerProductId를 수정해야 한다(중복 등록 방지).
+    assert second.market_product_id == first.market_product_id
+
+
+def test_register_product_for_master_product_skips_already_active_listing(sample_product_with_asset, db_session):
+    """판매중 상품을 다시 등록하려 하면 쿠팡 API를 호출하지 않고 건너뛰어야 한다 —
+    전체수정하면 재심사로 판매가 멈출 수 있고, 가격/재고는 별도 동기화가 담당한다."""
+    first = register_product_for_master_product(
+        session=db_session,
+        product_id=sample_product_with_asset.product_id,
+        display_category_code=56137,
+        selling_price=Decimal("192834"),
+        size_stock=SAMPLE_SIZE_STOCK,
+        use_mock=True,
+        vendor_id="A00123456",
+        request_approval=True,
+    )
+    second = register_product_for_master_product(
+        session=db_session,
+        product_id=sample_product_with_asset.product_id,
+        display_category_code=56137,
+        selling_price=Decimal("150000"),
+        size_stock=SAMPLE_SIZE_STOCK,
+        use_mock=True,
+        vendor_id="A00123456",
+    )
+
+    assert second.status == ListingStatus.ACTIVE
+    assert second.market_product_id == first.market_product_id
+    assert second.selling_price == Decimal("192834")  # 건너뛰었으니 가격도 그대로
+
+
+def test_build_seller_product_payload_includes_ai_search_tags():
+    data = _sample_input()
+    data.search_tags = ("남성운동화", "데일리스니커즈", "화이트스니커즈")
+    payload = build_seller_product_payload(data, SAMPLE_SELLER_INFO)
+
+    tags = payload["items"][0]["searchTags"]
+    assert tags[0] == "나이키"
+    assert {"남성운동화", "데일리스니커즈", "화이트스니커즈"} <= set(tags)
 
 
 def test_register_product_for_master_product_with_existing_id_updates_in_place(sample_product_with_asset, db_session):
