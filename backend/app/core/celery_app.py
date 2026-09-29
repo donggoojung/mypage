@@ -13,6 +13,7 @@ celery_app = Celery(
         "app.workers.tasks.asset_generation_tasks",
         "app.workers.tasks.order_tasks",
         "app.workers.tasks.pipeline_tasks",
+        "app.workers.tasks.inquiry_tasks",
     ],
 )
 
@@ -37,6 +38,11 @@ celery_app.conf.beat_schedule = {
     "detect-cancellations-and-returns-every-5-minutes": {
         "task": "order_tasks.detect_cancellations_and_returns",
         "schedule": 300.0,
+    },
+    # 쿠팡은 문의 답변이 늦으면 판매자 점수를 깎는다 — 10분마다 확인해 텔레그램으로 알린다.
+    "collect-inquiries-every-10-minutes": {
+        "task": "inquiry_tasks.collect_inquiries",
+        "schedule": 600.0,
     },
     "refresh-source-stock-every-30-minutes": {
         "task": "crawl_tasks.refresh_all_source_mappings",

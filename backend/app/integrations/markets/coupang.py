@@ -63,6 +63,14 @@ RETURN_CANCELLATION_REQUESTS_PATH = "/v2/providers/openapi/apis/api/v6/vendors/{
 # "deliveryCompanyCode", "invoiceNumber", ...}]} 형태 — 정확한 필드명은 실API로
 # 재확인 필요(실API 미검증).
 SHIPMENT_INVOICE_PATH = "/v2/providers/openapi/apis/api/v4/vendors/{vendor_id}/orders/invoices"
+# 2026-09-29 GitHub 오픈소스 구현체(kyungdongseo/coupang cs.py)로 확인된 경로 — 실API 미검증.
+# 상품별 고객문의(상품 Q&A)와, 쿠팡 고객센터가 판매자에게 넘긴(이관) 문의는 API가 따로다.
+ONLINE_INQUIRIES_PATH = "/v2/providers/openapi/apis/api/v4/vendors/{vendor_id}/onlineInquiries"
+ONLINE_INQUIRY_REPLY_PATH = ONLINE_INQUIRIES_PATH + "/{inquiry_id}/replies"
+CALL_CENTER_INQUIRIES_PATH = "/v2/providers/openapi/apis/api/v4/vendors/{vendor_id}/callCenterInquiries"
+CALL_CENTER_INQUIRY_REPLY_PATH = CALL_CENTER_INQUIRIES_PATH + "/{inquiry_id}/replies"
+# 쿠팡 고객문의 조회 API의 최대 조회기간(실API 미검증 — 판매자센터 안내 기준 7일).
+INQUIRY_LOOKBACK_DAYS = 6
 # 2026-09-26 웹검색으로 공식 문서 예시 응답까지 확인됨(실API 미검증) — "상품 등록 현황 조회".
 # 응답 예시: {"code":"SUCCESS","data":{"vendorId":"A00123456","restricted":false,
 # "registeredCount":8125,"permittedCount":10000}} — permittedCount가 null이면 등록 개수
@@ -306,6 +314,14 @@ def build_seller_product_payload(data: CoupangProductInput, seller_info: dict) -
         "requested": data.request_approval,
         "items": items,
     }
+
+
+def _extract_list(body: dict | list) -> list[dict]:
+    """쿠팡 응답의 목록 위치가 API마다 달라(data 자체 / data.content / content) 모두 받아준다."""
+    data = body.get("data", body) if isinstance(body, dict) else body
+    if isinstance(data, dict):
+        data = data.get("content") or data.get("items") or []
+    return data if isinstance(data, list) else []
 
 
 class CoupangWingClient:
@@ -823,6 +839,79 @@ class CoupangWingClient:
     # --- 품절/가격 자동동기화(2단계 안전장치)용 메서드 -----------------------------
     # 실API 미검증 — kyungdongseo/coupang(GitHub) 소스로 경로만 확인했고, 실제 승인된
     # (판매중) 상품이 생기기 전까지는 scripts/test_stock_sync.py 등으로 검증이 필요하다.
+
+    # --- 고객문의(CS) --------------------------------------------------------------
+
+    async def fetch_unanswered_product_inquiries(self, vendor_id: str) -> list[dict]:
+        """상품 상세페이지 Q&A 중 아직 답변하지 않은 문의를 조회한다 (실API 미검증)."""
+        if self._use_mock:
+            return []
+        query = self._inquiry_date_query() + "&answeredType=NOANSWER&pageNum=1&pageSize=50"
+        body = await self._signed_get(ONLINE_INQUIRIES_PATH.format(vendor_id=vendor_id), query)
+        return _extract_list(body)
+
+    async def fetch_unanswered_call_center_inquiries(self, vendor_id: str) -> list[dict]:
+        """쿠팡 고객센터가 판매자에게 넘긴 문의 중 아직 답변하지 않은 것을 조회한다 (실API 미검증)."""
+        if self._use_mock:
+            return []
+        query = self._inquiry_date_query() + "&partnerCounselingStatus=NO_ANSWER&pageNum=1&pageSize=30"
+        body = await self._signed_get(CALL_CENTER_INQUIRIES_PATH.format(vendor_id=vendor_id), query)
+        return _extract_list(body)
+
+    async def reply_product_inquiry(self, vendor_id: str, inquiry_id: str, content: str) -> dict:
+        if self._use_mock:
+            return {"code": 200, "message": "(Mock) 답변 등록됨"}
+        path = ONLINE_INQUIRY_REPLY_PATH.format(vendor_id=vendor_id, inquiry_id=inquiry_id)
+        body = {"content": content, "vendorId": vendor_id, "replyBy": self._settings.coupang_vendor_user_id}
+        return await self._signed_post(path, body)
+
+    async def reply_call_center_inquiry(
+        self, vendor_id: str, inquiry_id: str, content: str, parent_answer_id: str | None
+    ) -> dict:
+        if self._use_mock:
+            return {"code": 200, "message": "(Mock) 답변 등록됨"}
+        path = CALL_CENTER_INQUIRY_REPLY_PATH.format(vendor_id=vendor_id, inquiry_id=inquiry_id)
+        body = {
+            "vendorId": vendor_id,
+            "inquiryId": inquiry_id,
+            "content": content,
+            "replyBy": self._settings.coupang_vendor_user_id,
+            "parentAnswerId": parent_answer_id,
+        }
+        return await self._signed_post(path, body)
+
+    @staticmethod
+    def _inquiry_date_query() -> str:
+        from datetime import timedelta
+
+        now = datetime.now(UTC)
+        date_from = (now - timedelta(days=INQUIRY_LOOKBACK_DAYS)).strftime("%Y-%m-%d")
+        return f"?inquiryStartAt={date_from}&inquiryEndAt={now.strftime('%Y-%m-%d')}"
+
+    async def _signed_get(self, path: str, query: str) -> dict:
+        headers = _build_authorization_header(
+            method="GET",
+            path=path,
+            access_key=self._settings.coupang_access_key,
+            secret_key=self._settings.coupang_secret_key,
+            query=query,
+        )
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.get(f"{COUPANG_API_HOST}{path}{query}", headers=headers)
+            response.raise_for_status()
+            return response.json()
+
+    async def _signed_post(self, path: str, body: dict) -> dict:
+        headers = _build_authorization_header(
+            method="POST",
+            path=path,
+            access_key=self._settings.coupang_access_key,
+            secret_key=self._settings.coupang_secret_key,
+        )
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(f"{COUPANG_API_HOST}{path}", headers=headers, json=body)
+            response.raise_for_status()
+            return response.json()
 
     async def fetch_seller_product(self, seller_product_id: str) -> dict:
         """등록된 상품의 상세 정보(사이즈별 vendorItemId 포함)를 조회한다."""

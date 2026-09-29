@@ -217,3 +217,13 @@ async def test_mock_generate_search_tags_returns_clean_tags():
     assert tags
     assert "운동화" in tags
     assert "나이키" not in tags  # 브랜드명은 쿠팡 등록 시 따로 맨 앞에 넣는다
+
+
+@pytest.mark.asyncio
+async def test_mock_draft_inquiry_answer_is_polite_and_non_empty():
+    client = GeminiClient(settings=_mock_settings())
+
+    answer = await client.draft_inquiry_answer("사이즈 정사이즈인가요?", "브랜드: 나이키")
+
+    assert answer.startswith("안녕하세요")
+    assert "감사합니다" in answer

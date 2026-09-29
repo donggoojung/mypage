@@ -74,3 +74,17 @@ class InspectionStatus(str, enum.Enum):
     SOURCE_RETURN_COMPLETED = "source_return_completed"
     DISPUTE_INVESTIGATING = "dispute_investigating"
     REFUND_COMPLETED = "refund_completed"
+
+
+class InquiryType(str, enum.Enum):
+    """쿠팡 고객문의 종류 — 답변 API가 서로 달라 구분해야 한다."""
+
+    # 상품 상세페이지 Q&A (고객 → 판매자 직접 문의)
+    PRODUCT = "product"
+    # 고객이 쿠팡 고객센터에 문의했고, 쿠팡 상담원이 판매자에게 넘긴(이관) 문의 — 더 급하다.
+    CALL_CENTER = "call_center"
+
+
+class InquiryStatus(str, enum.Enum):
+    PENDING = "pending"
+    ANSWERED = "answered"

@@ -3,7 +3,7 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
-from app.api.routers import orders, pipeline, products, returns
+from app.api.routers import inquiries, orders, pipeline, products, returns
 
 app = FastAPI(
     title="브랜드 위탁판매/구매대행 자동화 시스템",
@@ -21,6 +21,7 @@ app.include_router(pipeline.router)
 app.include_router(products.router)
 app.include_router(orders.router)
 app.include_router(returns.router)
+app.include_router(inquiries.router)
 
 # 대시보드(app/static/index.html)를 "/"에서 바로 열 수 있게 정적 파일로 서빙한다.
 # API 라우터를 먼저 등록해야 "/api/..." 요청이 이 catch-all 마운트에 가로채이지 않는다.

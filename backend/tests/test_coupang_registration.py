@@ -687,3 +687,22 @@ async def test_fetch_registration_status_mock_returns_unlimited():
     assert result["restricted"] is False
     assert result["permittedCount"] is None
     assert result["registeredCount"] >= 0
+
+
+@pytest.mark.asyncio
+async def test_inquiry_apis_mock_return_empty_and_reply_succeeds():
+    client = CoupangWingClient(use_mock=True)
+
+    assert await client.fetch_unanswered_product_inquiries("A00123456") == []
+    assert await client.fetch_unanswered_call_center_inquiries("A00123456") == []
+    assert (await client.reply_product_inquiry("A00123456", "1", "답변"))["code"] == 200
+    assert (await client.reply_call_center_inquiry("A00123456", "2", "답변", "9"))["code"] == 200
+
+
+def test_extract_list_handles_each_coupang_response_shape():
+    from app.integrations.markets.coupang import _extract_list
+
+    assert _extract_list({"data": [{"a": 1}]}) == [{"a": 1}]
+    assert _extract_list({"data": {"content": [{"a": 1}]}}) == [{"a": 1}]
+    assert _extract_list({"content": [{"a": 1}]}) == [{"a": 1}]
+    assert _extract_list({"data": None}) == []

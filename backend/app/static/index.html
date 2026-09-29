@@ -142,6 +142,7 @@
     <button class="tab-btn" onclick="showTab('tab-batch')">섹션 일괄 등록</button>
     <button class="tab-btn" onclick="showTab('tab-orders')">주문 현황</button>
     <button class="tab-btn" onclick="showTab('tab-returns')">반품/취소 관리</button>
+    <button class="tab-btn" onclick="showTab('tab-inquiries')">고객문의 <span id="inquiry-count-badge"></span></button>
   </div>
 
   <section class="card tab-panel active" id="tab-new-product">
@@ -229,6 +230,19 @@
     <p class="empty" style="margin-top:-6px">쿠팡 취소/반품이 감지되면 5분 안에 여기에 나타나고 텔레그램으로도 알림이 갑니다. 반품 상품이 거점(사무실/자택)에 도착하면 훼손·시착흔적·텍(Tag)을 확인하고 아래 버튼으로 검수 결과를 처리해주세요.</p>
     <div id="returns-area"><p class="empty">불러오는 중...</p></div>
   </section>
+
+  <section class="card tab-panel" id="tab-inquiries">
+    <div class="card-header-row">
+      <h2>고객문의</h2>
+      <div class="row">
+        <button class="secondary" onclick="collectInquiries()" id="collect-inquiries-btn">새 문의 확인</button>
+        <button class="secondary" onclick="loadInquiries()">새로고침</button>
+      </div>
+    </div>
+    <p class="empty" style="margin-top:-6px">쿠팡 문의는 10분마다 자동으로 확인되고, 새 문의가 오면 텔레그램으로 알림이 갑니다. AI가 쓴 답변 초안을 확인·수정한 뒤 [답변 등록]을 눌러야 쿠팡에 올라갑니다(자동 등록 안 함). 쿠팡은 답변이 늦으면 판매자 점수를 깎으니 가능한 빨리 답해주세요.</p>
+    <div id="collect-inquiries-status"></div>
+    <div id="inquiries-area"><p class="empty">불러오는 중...</p></div>
+  </section>
 </main>
 
 <script>
@@ -257,6 +271,10 @@ function badgeClass(status) {
 
 function fmtWon(n) {
   return n === null || n === undefined ? "-" : Number(n).toLocaleString("ko-KR") + "원";
+}
+
+function escapeHtml(text) {
+  return String(text ?? "").replace(/[&<>"']/g, ch => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[ch]));
 }
 
 function showTab(tabId) {
@@ -744,9 +762,98 @@ async function completeSourceReturn(returnId) {
   }
 }
 
+const INQUIRY_TYPE_LABELS = { product: "상품 문의", call_center: "고객센터 이관(급함)" };
+
+async function loadInquiries() {
+  const area = document.getElementById("inquiries-area");
+  const countBadge = document.getElementById("inquiry-count-badge");
+  let items;
+  try {
+    items = await (await fetch("/api/inquiries")).json();
+  } catch (err) {
+    area.innerHTML = `<p class="empty">불러오기 실패: ${escapeHtml(err.message)}</p>`;
+    return;
+  }
+
+  const pendingCount = items.filter(q => q.status === "pending").length;
+  countBadge.innerHTML = pendingCount ? `<span class="badge danger">${pendingCount}</span>` : "";
+
+  if (!items.length) {
+    area.innerHTML = `<p class="empty">아직 들어온 문의가 없습니다.</p>`;
+    return;
+  }
+
+  area.innerHTML = items.map(q => `
+    <div style="border:1px solid var(--border);border-radius:8px;padding:12px;margin-bottom:12px;">
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:6px;">
+        <span class="badge ${q.status === "pending" ? "danger" : "active"}">${q.status === "pending" ? "답변 필요" : "답변 완료"}</span>
+        <span class="badge ${q.inquiry_type === "call_center" ? "danger" : "other"}">${INQUIRY_TYPE_LABELS[q.inquiry_type] || escapeHtml(q.inquiry_type)}</span>
+        <span style="color:var(--muted);font-size:13px;">${escapeHtml(q.product_label || "연결된 상품 없음")} · ${escapeHtml(q.inquired_at || "")}</span>
+      </div>
+      <p style="margin:6px 0;white-space:pre-wrap;"><b>질문</b> ${escapeHtml(q.question)}</p>
+      ${q.status === "pending" ? `
+        <textarea id="answer-${q.inquiry_id}" rows="5" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:6px;">${escapeHtml(q.ai_draft_answer || "")}</textarea>
+        <div class="row" style="margin-top:6px;">
+          <button onclick="submitInquiryAnswer(${q.inquiry_id})" id="answer-btn-${q.inquiry_id}">답변 등록</button>
+          <span style="color:var(--muted);font-size:12px;">${q.ai_draft_answer ? "AI 초안입니다 — 사이즈/재고/배송 내용이 맞는지 꼭 확인하세요." : "AI 초안 생성 실패 — 직접 작성해주세요."}</span>
+        </div>
+      ` : `<p style="margin:6px 0;white-space:pre-wrap;color:var(--muted);"><b>등록한 답변</b> ${escapeHtml(q.final_answer || "")}</p>`}
+    </div>
+  `).join("");
+}
+
+async function submitInquiryAnswer(inquiryId) {
+  const answer = document.getElementById(`answer-${inquiryId}`).value.trim();
+  if (!answer) { alert("답변 내용을 입력해주세요."); return; }
+  if (!confirm("이 내용으로 쿠팡에 답변을 등록할까요? 등록 후에는 수정이 어렵습니다.")) return;
+  const btn = document.getElementById(`answer-btn-${inquiryId}`);
+  btn.disabled = true;
+  try {
+    const res = await fetch(`/api/inquiries/${inquiryId}/answer`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ answer }),
+    });
+    if (!res.ok) throw new Error((await res.json()).detail || `서버 오류 (${res.status})`);
+    loadInquiries();
+  } catch (err) {
+    alert("답변 등록 실패: " + err.message);
+    btn.disabled = false;
+  }
+}
+
+async function collectInquiries() {
+  const btn = document.getElementById("collect-inquiries-btn");
+  const statusBox = document.getElementById("collect-inquiries-status");
+  btn.disabled = true;
+  statusBox.className = "info-box show pending";
+  statusBox.textContent = "쿠팡에서 새 문의를 확인하는 중...";
+  let taskId;
+  try {
+    const res = await fetch("/api/inquiries/collect", { method: "POST" });
+    if (!res.ok) throw new Error(`서버 오류 (${res.status})`);
+    taskId = (await res.json()).task_id;
+  } catch (err) {
+    statusBox.className = "info-box show failure";
+    statusBox.textContent = "요청 실패: " + err.message;
+    btn.disabled = false;
+    return;
+  }
+  pollTask(taskId, statusBox, {
+    onSuccess: (r) => {
+      statusBox.textContent = `확인 완료: 새 문의 ${r.created_inquiry_ids.length}건` +
+        (r.errors.length ? `\n일부 조회 실패: ${r.errors.join(" / ")}` : "");
+      btn.disabled = false;
+      loadInquiries();
+    },
+    onFailure: () => { btn.disabled = false; },
+  });
+}
+
 loadProducts();
 loadOrders();
 loadReturns();
+loadInquiries();
 </script>
 </body>
 </html>

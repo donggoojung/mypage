@@ -1,3 +1,4 @@
+from app.models.customer_inquiry import CustomerInquiry
 from app.models.customer_order import CustomerOrder
 from app.models.generated_asset import GeneratedAsset
 from app.models.market_listing import MarketListing
@@ -14,4 +15,5 @@ __all__ = [
     "CustomerOrder",
     "OrderFulfillment",
     "ReturnRequest",
+    "CustomerInquiry",
 ]

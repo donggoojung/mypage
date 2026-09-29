@@ -156,6 +156,55 @@ class GeminiClient:
             raise GeminiClientError(f"Gemini 검색태그 응답이 배열이 아닙니다: {parsed!r}")
         return clean_search_tags([str(tag) for tag in parsed])
 
+    # --- 1-3) 고객문의 답변 초안 -------------------------------------------
+
+    async def draft_inquiry_answer(self, question: str, product_context: str) -> str:
+        """쿠팡 고객문의 답변 초안을 만든다 — 대표님이 확인·수정한 뒤에만 실제로 등록된다."""
+        if self._use_mock:
+            return _mock_draft_inquiry_answer(question)
+        return await self._real_draft_inquiry_answer(question, product_context)
+
+    async def _real_draft_inquiry_answer(self, question: str, product_context: str) -> str:
+        from google.genai import types
+
+        prompt = (
+            "너는 쿠팡에서 브랜드 신발을 파는 판매자의 고객문의 담당자다. 아래 문의에 대한 답변을 "
+            "한국어 존댓말로 3~5문장 작성해라. 답변 본문만 출력해라.\n\n"
+            f"[상품 정보]\n{product_context}\n\n[고객 문의]\n{question}\n\n"
+            "규칙:\n"
+            "- 상품 정보에 없는 사실(소재, 발볼, 사이즈 체감, 입고일 등)을 지어내지 마라. 모르면 "
+            "'평소 신으시는 사이즈 기준으로 선택하시고 상세페이지 사이즈표를 참고해 주세요'처럼 "
+            "일반적인 안내만 하라\n"
+            "- 재고는 [상품 정보]의 '구매 가능 사이즈'만 기준으로 답하고, 목록에 없는 사이즈는 "
+            "현재 품절이라고 안내해라\n"
+            "- 배송: 결제 완료 후 영업일 기준 2~3일 내 출고된다고 안내해라. 정확한 도착일은 약속하지 마라\n"
+            # 무료배송 상품은 반품 시 초도배송비+반품배송비(왕복)가 붙어 금액이 경우마다 달라
+            # 금액을 직접 말하지 않게 한다.
+            "- 단순변심 반품은 반품배송비가 발생하며 금액은 상세페이지 반품/교환 안내를 참고해 "
+            "달라고 안내해라(금액을 직접 말하지 마라)\n"
+            "- 할인, 사은품, 가격 조정, 교환 확정 같은 약속을 하지 마라\n"
+            "- 구매처(어디서 사서 보내는지)는 언급하지 마라\n"
+            "- 전화번호/주소 등 개인정보를 묻지 마라\n"
+            "- 인사말로 시작하고 감사 인사로 끝내라"
+        )
+        try:
+            response = await self._sdk_client.aio.models.generate_content(
+                model=self._settings.gemini_model,
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    temperature=0.3,
+                    max_output_tokens=1024,
+                    thinking_config=types.ThinkingConfig(thinking_budget=0),
+                ),
+            )
+        except Exception as exc:  # noqa: BLE001
+            raise GeminiClientError(f"Gemini 문의 답변 초안 생성 실패: {exc}") from exc
+
+        answer = (response.text or "").strip()
+        if not answer:
+            raise GeminiClientError(f"Gemini가 빈 답변을 반환했습니다: {response}")
+        return answer
+
     # --- 2) 상세 스펙 요약 -------------------------------------------------
 
     async def summarize_product_specs(self, raw_description_text: str) -> dict:
@@ -220,6 +269,14 @@ def _mock_generate_search_tags(brand: str, raw_title: str, category: str) -> lis
     words = [w for w in (raw_title or "").split() if w != brand]
     tags = [category, f"{brand}{category}" if brand and category else "", *words]
     return clean_search_tags(tags)
+
+
+def _mock_draft_inquiry_answer(question: str) -> str:
+    return (
+        "안녕하세요, 고객님. 문의 주셔서 감사합니다. "
+        "결제 완료 후 영업일 기준 2~3일 내 출고되며, 사이즈는 평소 신으시는 사이즈 기준으로 "
+        "선택하시고 상세페이지 사이즈표를 참고해 주세요. 감사합니다."
+    )
 
 
 def _mock_summarize_product_specs(raw_description_text: str) -> dict:
