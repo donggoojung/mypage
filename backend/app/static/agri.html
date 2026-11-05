@@ -1,0 +1,1089 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>농산물 판매 관리</title>
+<link rel="icon" href="data:,">
+<!-- 엑셀 읽기·만들기 도구 (SheetJS 0.18.5, 아파치 2.0 라이선스). 인터넷이 없어도 되도록 프로그램 안에 둔다. -->
+<script src="/vendor/xlsx.full.min.js"></script>
+<style>
+  :root {
+    --bg: #f4f6f3;
+    --card: #ffffff;
+    --border: #e1e6df;
+    --text: #1f2a1f;
+    --muted: #667066;
+    --primary: #2f7d32;
+    --primary-hover: #25662a;
+    --soft: #eef6ee;
+    --danger: #c62828;
+    --warn: #b26a00;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, "Segoe UI", "Malgun Gothic", sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    font-size: 14px;
+  }
+  header {
+    background: var(--card);
+    border-bottom: 1px solid var(--border);
+    padding: 16px 20px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+  header h1 { margin: 0; font-size: 20px; }
+  header p { margin: 4px 0 0; color: var(--muted); font-size: 13px; }
+  header a { color: var(--muted); font-size: 13px; }
+  main { max-width: 1100px; margin: 20px auto; padding: 0 16px 40px; }
+  .tab-bar {
+    display: flex;
+    gap: 4px;
+    border-bottom: 1px solid var(--border);
+    overflow-x: auto;
+    margin-bottom: 18px;
+  }
+  .tab-btn {
+    background: none;
+    color: var(--muted);
+    border: none;
+    border-radius: 0;
+    padding: 12px 14px;
+    font-size: 15px;
+    font-weight: 600;
+    white-space: nowrap;
+    border-bottom: 3px solid transparent;
+    margin-bottom: -1px;
+  }
+  .tab-btn:hover { background: none; color: var(--text); }
+  .tab-btn.active { color: var(--primary); border-bottom-color: var(--primary); }
+  .tab-panel { display: none; flex-direction: column; gap: 16px; }
+  .tab-panel.active { display: flex; }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 18px;
+  }
+  .card h2 { margin: 0 0 12px; font-size: 17px; }
+  .card h3 { margin: 16px 0 8px; font-size: 15px; }
+  .head-row { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
+  .head-row h2 { margin: 0; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .help { color: var(--muted); font-size: 13px; line-height: 1.6; margin: 0 0 12px; }
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+    gap: 10px;
+  }
+  label.field { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--muted); }
+  input, select, textarea {
+    padding: 9px 10px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    font-size: 14px;
+    font-family: inherit;
+    background: #fff;
+    color: var(--text);
+    width: 100%;
+  }
+  textarea { resize: vertical; }
+  button {
+    padding: 9px 14px;
+    border: none;
+    border-radius: 6px;
+    background: var(--primary);
+    color: #fff;
+    font-size: 14px;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  button:hover { background: var(--primary-hover); }
+  button:disabled { background: #a5aca5; cursor: not-allowed; }
+  button.secondary { background: #e8ece7; color: var(--text); }
+  button.secondary:hover { background: #dbe1da; }
+  button.danger { background: #fbe9e9; color: var(--danger); }
+  button.danger:hover { background: #f6d5d5; }
+  button.small { padding: 5px 9px; font-size: 13px; }
+  .table-wrap { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 8px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; white-space: nowrap; }
+  td.num, th.num { text-align: right; white-space: nowrap; }
+  .empty { color: var(--muted); padding: 10px 0; }
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 12px; background: #e8ece7; white-space: nowrap; }
+  .badge.new { background: #fff1d6; color: #8a5300; }
+  .badge.ordered { background: #e3effd; color: #1c4f8f; }
+  .badge.invoiced { background: #fde8f3; color: #8f1c5b; }
+  .badge.shipped { background: #e3f4e4; color: #1f6b23; }
+  .badge.cancelled { background: #eee; color: #777; text-decoration: line-through; }
+  .badge.selling { background: #e3f4e4; color: #1f6b23; }
+  .badge.soldout, .badge.stopped { background: #fbe9e9; color: var(--danger); }
+  .bad { color: var(--danger); font-weight: 600; }
+  .good { color: var(--primary); font-weight: 600; }
+  .stats { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 10px; }
+  .stat { background: var(--soft); border-radius: 8px; padding: 14px; }
+  .stat .label { color: var(--muted); font-size: 13px; }
+  .stat .value { font-size: 22px; font-weight: 700; margin-top: 4px; }
+  .stat.alert { background: #fff4e0; }
+  .msg { margin-top: 10px; padding: 10px 12px; border-radius: 8px; font-size: 13px; white-space: pre-wrap; display: none; }
+  .msg.show { display: block; }
+  .msg.ok { background: #e3f4e4; }
+  .msg.err { background: #fbe9e9; color: var(--danger); }
+  .msg.info { background: #f1f4f0; }
+  .todo li { margin-bottom: 6px; line-height: 1.5; }
+  .option-row {
+    display: grid;
+    grid-template-columns: 2fr 1fr 1fr 1fr 1.2fr 1fr 1fr 1.2fr auto;
+    gap: 6px;
+    align-items: center;
+    margin-bottom: 6px;
+  }
+  .option-row.head { color: var(--muted); font-size: 12px; }
+  .option-row .hint { font-size: 12px; color: var(--muted); }
+  .product-card { border: 1px solid var(--border); border-radius: 8px; padding: 12px; margin-bottom: 10px; }
+  .product-card .title { font-weight: 700; font-size: 15px; }
+  .product-card td:first-child { min-width: 110px; }
+  .product-card .sub { color: var(--muted); font-size: 12px; margin-top: 2px; }
+  .hidden { display: none !important; }
+  pre.notice { background: #f7f8f6; border: 1px solid var(--border); border-radius: 8px; padding: 12px; white-space: pre-wrap; font-family: inherit; font-size: 13px; line-height: 1.6; }
+  @media (max-width: 760px) {
+    .option-row { grid-template-columns: 1fr 1fr; }
+    .option-row.head { display: none; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div>
+    <h1>농산물 판매 관리</h1>
+    <p>공급사 상품을 오픈마켓에 팔고, 주문이 오면 공급사에 발주하는 일을 한곳에서 관리합니다.</p>
+  </div>
+  <a href="/">← 신발 판매 화면으로</a>
+</header>
+
+<main>
+  <div class="tab-bar">
+    <button class="tab-btn active" data-tab="home">한눈에 보기</button>
+    <button class="tab-btn" data-tab="calc">가격 계산기</button>
+    <button class="tab-btn" data-tab="products">상품</button>
+    <button class="tab-btn" data-tab="orders">주문·발주</button>
+    <button class="tab-btn" data-tab="suppliers">공급사</button>
+    <button class="tab-btn" data-tab="settings">설정</button>
+  </div>
+
+  <!-- 한눈에 보기 -->
+  <section class="tab-panel active" id="tab-home">
+    <div class="card">
+      <h2>이번 달</h2>
+      <div class="stats" id="home-stats"><p class="empty">불러오는 중...</p></div>
+    </div>
+    <div class="card">
+      <h2>지금 할 일</h2>
+      <ul class="todo" id="home-todo"></ul>
+    </div>
+    <div class="card">
+      <h2>처음 쓰는 순서</h2>
+      <ol class="todo">
+        <li><b>설정</b>에서 마켓 수수료와 품목별 최소 이익을 확인합니다. (과일 4,000원은 이미 들어가 있어요)</li>
+        <li><b>공급사</b>를 등록합니다. 공급가에 택배비가 포함돼 있으면 택배비는 0으로 둡니다.</li>
+        <li><b>상품</b>을 하나씩 입력하거나, 엑셀로 한꺼번에 올립니다. 마켓마다 얼마에 팔아야 하는지 자동으로 나와요.</li>
+        <li>스마트스토어에 상품을 올릴 때 <b>표시 문구</b> 버튼으로 상품정보고시·원산지·반품 안내 문구를 복사해서 붙입니다.</li>
+        <li>주문이 오면 <b>주문·발주</b>에 입력하고, 발주서 엑셀을 받아 공급사에 보냅니다.</li>
+        <li>공급사가 송장번호를 채워서 보내주면 그 엑셀을 올리고, 스마트스토어 송장 일괄등록 엑셀을 받아 판매자센터에 올립니다.</li>
+      </ol>
+    </div>
+  </section>
+
+  <!-- 가격 계산기 -->
+  <section class="tab-panel" id="tab-calc">
+    <div class="card">
+      <h2>가격 계산기</h2>
+      <p class="help">공급가와 택배비를 넣으면, 마켓 수수료를 떼고도 최소 이익이 남는 판매가를 마켓별로 계산합니다.
+        가공하지 않은 농산물은 부가세가 없어서 판매가에 부가세를 더하지 않습니다.</p>
+      <div class="grid">
+        <label class="field">공급가 (원)<input id="calc-supply" type="number" min="0" placeholder="예: 15000"></label>
+        <label class="field">택배비 (원, 공급가에 포함이면 0)<input id="calc-ship" type="number" min="0" value="0"></label>
+        <label class="field">품목<select id="calc-category"></select></label>
+        <label class="field">내가 정한 판매가 (선택)<input id="calc-sale" type="number" min="0" placeholder="비우면 추천가"></label>
+      </div>
+      <div class="row" style="margin-top:12px"><button onclick="runCalc()">계산하기</button></div>
+      <div id="calc-result" style="margin-top:14px"></div>
+    </div>
+  </section>
+
+  <!-- 상품 -->
+  <section class="tab-panel" id="tab-products">
+    <div class="card">
+      <div class="head-row">
+        <h2>상품</h2>
+        <div class="row">
+          <button onclick="openProductForm()">상품 직접 입력</button>
+          <button class="secondary" onclick="toggle('import-box')">엑셀로 한꺼번에 올리기</button>
+          <button class="secondary" onclick="loadProducts()">새로고침</button>
+        </div>
+      </div>
+
+      <div id="import-box" class="card hidden" style="background:#fafbf9;margin-bottom:12px">
+        <h3 style="margin-top:0">엑셀로 한꺼번에 올리기</h3>
+        <p class="help">① 양식을 받아서 공급사 상품표의 내용을 옮겨 적습니다. 한 줄이 옵션 하나예요 (같은 상품명은 한 상품으로 묶입니다).<br>
+          ② 공급사를 고르고 파일을 올리면 미리보기가 나옵니다. 확인 후 [등록하기]를 누릅니다.<br>
+          같은 파일을 두 번 올려도 이미 있는 옵션은 다시 만들지 않습니다.</p>
+        <div class="row">
+          <button class="secondary" onclick="downloadImportTemplate()">양식 받기</button>
+          <select id="import-supplier" style="width:auto"></select>
+          <input id="import-file" type="file" accept=".xlsx,.xls,.csv" style="width:auto" onchange="readImportFile()">
+        </div>
+        <div id="import-preview" style="margin-top:10px"></div>
+        <div id="import-msg" class="msg"></div>
+      </div>
+
+      <div id="product-form" class="card hidden" style="background:#fafbf9;margin-bottom:12px">
+        <h3 style="margin-top:0" id="product-form-title">상품 입력</h3>
+        <div class="grid">
+          <label class="field">공급사<select id="pf-supplier"></select></label>
+          <label class="field">상품명<input id="pf-name" placeholder="예: 충주 꿀사과"></label>
+          <label class="field">품목<select id="pf-category" onchange="updateRiceFields(); refreshOptionHints()"></select></label>
+          <label class="field">판매 상태<select id="pf-status"></select></label>
+          <label class="field">원산지<input id="pf-origin" placeholder="예: 국산(충북 충주)"></label>
+          <label class="field">생산자<input id="pf-producer" placeholder="예: 충주농원"></label>
+          <label class="field">보관 방법<input id="pf-storage" placeholder="예: 받으신 뒤 냉장 보관"></label>
+          <label class="field">포장일·생산연도 안내<input id="pf-packing" placeholder="비우면: 주문 후 산지에서 포장하여 발송"></label>
+          <label class="field rice-only">품종 (쌀)<input id="pf-variety" placeholder="예: 추청"></label>
+          <label class="field rice-only">생산연도 (쌀)<input id="pf-harvest" placeholder="예: 2026년"></label>
+          <label class="field rice-only">등급 (쌀)<input id="pf-grade" placeholder="예: 특"></label>
+          <label class="field">대표 사진 주소 (선택)<input id="pf-image"></label>
+        </div>
+        <label class="field" style="margin-top:10px">메모<textarea id="pf-memo" rows="2"></textarea></label>
+
+        <h3>옵션 (판매 단위)</h3>
+        <p class="help">택배비 칸은 공급가에 택배비가 포함이면 0. "직접 정한 판매가"를 비우면 마켓별 추천가로 팝니다.</p>
+        <div class="option-row head">
+          <div>옵션명</div><div>중량</div><div>수량</div><div>등급</div><div>공급사 상품코드</div>
+          <div>공급가</div><div>택배비</div><div>직접 정한 판매가</div><div></div>
+        </div>
+        <div id="pf-options"></div>
+        <div class="row"><button class="secondary small" onclick="addOptionRow()">+ 옵션 추가</button></div>
+
+        <div class="row" style="margin-top:14px">
+          <button onclick="saveProduct()">저장</button>
+          <button class="secondary" onclick="closeProductForm()">닫기</button>
+        </div>
+        <div id="product-form-msg" class="msg"></div>
+      </div>
+
+      <div id="notice-box" class="card hidden" style="background:#fafbf9;margin-bottom:12px">
+        <div class="head-row">
+          <h3 style="margin:0" id="notice-title">표시 문구</h3>
+          <div class="row">
+            <button class="small" onclick="copyNotice()">복사하기</button>
+            <button class="secondary small" onclick="toggle('notice-box', false)">닫기</button>
+          </div>
+        </div>
+        <p class="help">스마트스토어 상세 설명 맨 아래에 붙여 넣으세요. "(입력 필요)"라고 나온 곳은 상품 정보를 채우면 바뀝니다.</p>
+        <pre class="notice" id="notice-text"></pre>
+      </div>
+
+      <div id="products-area"><p class="empty">불러오는 중...</p></div>
+    </div>
+  </section>
+
+  <!-- 주문·발주 -->
+  <section class="tab-panel" id="tab-orders">
+    <div class="card">
+      <div class="head-row">
+        <h2>주문 입력</h2>
+        <button class="secondary small" onclick="toggle('order-form')">열기/닫기</button>
+      </div>
+      <p class="help">스마트스토어 자동 연동 전까지는 판매자센터의 새 주문을 보고 여기에 옮겨 적습니다.</p>
+      <div id="order-form">
+        <div class="grid">
+          <label class="field">마켓<select id="of-market" onchange="fillOrderAmount()"></select></label>
+          <label class="field">마켓 주문번호 (스마트스토어는 상품주문번호)<input id="of-no"></label>
+          <label class="field" style="grid-column: span 2">상품·옵션<select id="of-option" onchange="fillOrderAmount()"></select></label>
+          <label class="field">수량<input id="of-qty" type="number" min="1" value="1" onchange="fillOrderAmount()"></label>
+          <label class="field">결제 금액 합계 (원)<input id="of-amount" type="number" min="0"></label>
+          <label class="field">받는 분<input id="of-receiver"></label>
+          <label class="field">연락처<input id="of-phone" placeholder="010-0000-0000"></label>
+          <label class="field">우편번호<input id="of-zip"></label>
+          <label class="field" style="grid-column: span 2">주소<input id="of-address"></label>
+          <label class="field" style="grid-column: span 2">배송 메모<input id="of-memo"></label>
+        </div>
+        <div class="row" style="margin-top:12px"><button onclick="saveOrder()">주문 저장</button></div>
+        <div id="order-form-msg" class="msg"></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="head-row">
+        <h2>주문 목록</h2>
+        <div class="row">
+          <select id="order-filter" style="width:auto" onchange="loadOrders()"></select>
+          <button class="secondary" onclick="loadOrders()">새로고침</button>
+        </div>
+      </div>
+      <p class="help">
+        <b>① 발주서 엑셀 받기</b>: 고른 주문을 공급사별 엑셀로 내려받고 "발주 완료"로 바꿉니다. 공급사에 보내면서 마지막 두 칸(택배사, 송장번호)을 채워 달라고 하세요.<br>
+        <b>② 송장 엑셀 올리기</b>: 공급사가 채워서 보낸 엑셀을 올리면 송장번호가 주문에 들어갑니다.<br>
+        <b>③ 스마트스토어 송장 엑셀 받기</b>: 판매자센터 [발송처리]의 엑셀 일괄발송에 올릴 파일입니다. 올린 뒤 [마켓 입력 끝]을 누르세요.<br>
+        출고가 늦어지면 <b>가짜 송장번호를 넣지 말고</b> 판매자센터의 "발송 지연" 처리를 하세요. 가짜 송장은 판매 정지 사유입니다.
+      </p>
+      <div class="row" style="margin-bottom:10px">
+        <button onclick="downloadPurchaseSheets()">① 발주서 엑셀 받기</button>
+        <label class="row" style="gap:6px">
+          <button class="secondary" onclick="document.getElementById('tracking-file').click()">② 송장 엑셀 올리기</button>
+          <input id="tracking-file" type="file" accept=".xlsx,.xls,.csv" class="hidden" onchange="uploadTracking()">
+        </label>
+        <button class="secondary" onclick="downloadSmartstoreInvoice()">③ 스마트스토어 송장 엑셀 받기</button>
+        <button class="secondary" onclick="markMarketShipped()">마켓 입력 끝</button>
+      </div>
+      <div id="orders-msg" class="msg"></div>
+      <div id="orders-area" class="table-wrap"><p class="empty">불러오는 중...</p></div>
+    </div>
+  </section>
+
+  <!-- 공급사 -->
+  <section class="tab-panel" id="tab-suppliers">
+    <div class="card">
+      <h2 id="supplier-form-title">공급사 등록</h2>
+      <div class="grid">
+        <label class="field">공급사 이름<input id="sf-name" placeholder="예: 행운프레시"></label>
+        <label class="field">사이트 주소<input id="sf-url"></label>
+        <label class="field">담당자·연락처<input id="sf-contact"></label>
+        <label class="field">발주 방법<select id="sf-method"></select></label>
+        <label class="field">기본 택배비 (공급가에 포함이면 0)<input id="sf-ship" type="number" min="0" value="0"></label>
+        <label class="field">제주·도서산간 추가 배송비<input id="sf-remote" type="number" min="0" value="0"></label>
+        <label class="field">당일 출고 마감 시간<input id="sf-cutoff" placeholder="예: 오후 2시"></label>
+      </div>
+      <label class="field" style="margin-top:10px">메모 (보상 기준, 정산 주기 등)<textarea id="sf-memo" rows="2"></textarea></label>
+      <div class="row" style="margin-top:12px">
+        <button onclick="saveSupplier()">저장</button>
+        <button class="secondary" onclick="resetSupplierForm()">새로 입력</button>
+      </div>
+      <div id="supplier-msg" class="msg"></div>
+    </div>
+    <div class="card">
+      <h2>등록된 공급사</h2>
+      <div id="suppliers-area" class="table-wrap"><p class="empty">불러오는 중...</p></div>
+    </div>
+  </section>
+
+  <!-- 설정 -->
+  <section class="tab-panel" id="tab-settings">
+    <div class="card">
+      <h2>마켓 수수료 (%)</h2>
+      <p class="help">부가세를 포함한 대략값이 들어가 있습니다. 각 마켓 판매자센터에서 농산물 카테고리의 실제 수수료를 확인한 뒤 고쳐 주세요.
+        여기 값을 바꾸면 모든 상품의 추천 판매가가 다시 계산됩니다. (이미 들어온 주문의 이익은 바뀌지 않습니다)</p>
+      <div class="grid" id="set-fees"></div>
+    </div>
+    <div class="card">
+      <h2>품목별 최소 이익 (원, 주문 1건 기준)</h2>
+      <p class="help">과일 4,000원은 확정된 값입니다. 채소·쌀·잡곡·기타는 정하시기 전까지 임시로 3,000원입니다.</p>
+      <div class="grid" id="set-profits"></div>
+    </div>
+    <div class="card">
+      <h2>기타</h2>
+      <div class="grid">
+        <label class="field">판매가 올림 단위 (원)<input id="set-unit" type="number" min="1"></label>
+        <label class="field">고객 상담 전화번호<input id="set-phone" placeholder="표시 문구에 들어갑니다"></label>
+        <label class="field">상함·파손 신고 기한 (시간)<input id="set-claim" type="number" min="1"></label>
+      </div>
+      <div class="row" style="margin-top:12px"><button onclick="saveSettings()">설정 저장</button></div>
+      <div id="settings-msg" class="msg"></div>
+    </div>
+  </section>
+</main>
+
+<script>
+let META = null;
+let SETTINGS = null;
+let SUPPLIERS = [];
+let PRODUCTS = [];
+let ORDERS = [];
+let IMPORT_ROWS = [];
+let EDITING_PRODUCT_ID = null;
+let EDITING_SUPPLIER_ID = null;
+
+// ------------------------------------------------------------ 공통
+
+function won(n) {
+  return n === null || n === undefined || n === "" ? "-" : Number(n).toLocaleString("ko-KR") + "원";
+}
+
+function esc(text) {
+  return String(text ?? "").replace(/[&<>"']/g, ch => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[ch]));
+}
+
+function val(id) { return document.getElementById(id).value.trim(); }
+function num(id) { const v = val(id); return v === "" ? null : Number(v); }
+function setVal(id, v) { document.getElementById(id).value = v ?? ""; }
+
+function toggle(id, show) {
+  const el = document.getElementById(id);
+  const hide = show === undefined ? !el.classList.contains("hidden") : !show;
+  el.classList.toggle("hidden", hide);
+}
+
+function showMsg(id, text, kind = "ok") {
+  const el = document.getElementById(id);
+  el.className = `msg show ${kind}`;
+  el.textContent = text;
+}
+
+async function api(path, options = {}) {
+  const res = await fetch("/api/agri" + path, {
+    headers: { "Content-Type": "application/json" },
+    ...options,
+    body: options.body ? JSON.stringify(options.body) : undefined,
+  });
+  let data = null;
+  try { data = await res.json(); } catch (e) { /* 내용 없음 */ }
+  if (!res.ok) {
+    let detail = data && data.detail;
+    if (Array.isArray(detail)) {
+      detail = "입력값을 확인해 주세요: " + detail.map(d => (d.loc || []).slice(1).join(" > ")).join(", ");
+    }
+    throw new Error(detail || `서버 오류 (${res.status})`);
+  }
+  return data;
+}
+
+function fillSelect(id, entries, firstLabel) {
+  const el = document.getElementById(id);
+  const options = entries.map(([value, label]) => `<option value="${esc(value)}">${esc(label)}</option>`);
+  if (firstLabel) options.unshift(`<option value="">${esc(firstLabel)}</option>`);
+  el.innerHTML = options.join("");
+}
+
+document.querySelectorAll(".tab-btn").forEach(btn => {
+  btn.addEventListener("click", () => showTab(btn.dataset.tab));
+});
+
+function showTab(name) {
+  document.querySelectorAll(".tab-btn").forEach(b => b.classList.toggle("active", b.dataset.tab === name));
+  document.querySelectorAll(".tab-panel").forEach(p => p.classList.toggle("active", p.id === "tab-" + name));
+  if (name === "home") loadHome();
+  if (name === "products") loadProducts();
+  if (name === "orders") { loadProducts().then(fillOrderOptions); loadOrders(); }
+  if (name === "suppliers") loadSuppliers();
+}
+
+function today() {
+  const d = new Date();
+  return `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, "0")}${String(d.getDate()).padStart(2, "0")}`;
+}
+
+function saveWorkbook(sheets, fileName) {
+  const wb = XLSX.utils.book_new();
+  for (const [name, rows] of sheets) {
+    const ws = XLSX.utils.aoa_to_sheet(rows);
+    ws["!cols"] = rows[0].map(() => ({ wch: 16 }));
+    XLSX.utils.book_append_sheet(wb, ws, name.slice(0, 31));
+  }
+  XLSX.writeFile(wb, fileName);
+}
+
+function readSheetRows(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = e => {
+      try {
+        const wb = XLSX.read(new Uint8Array(e.target.result), { type: "array" });
+        const ws = wb.Sheets[wb.SheetNames[0]];
+        resolve(XLSX.utils.sheet_to_json(ws, { defval: "", raw: false }));
+      } catch (err) { reject(err); }
+    };
+    reader.onerror = () => reject(reader.error);
+    reader.readAsArrayBuffer(file);
+  });
+}
+
+function pick(row, ...names) {
+  // 엑셀 머리글에 띄어쓰기나 괄호 설명이 붙어 있어도 찾을 수 있게 앞부분으로 맞춘다.
+  for (const key of Object.keys(row)) {
+    const clean = key.replace(/\s/g, "");
+    if (names.some(n => clean.startsWith(n))) return String(row[key] ?? "").trim();
+  }
+  return "";
+}
+
+function toInt(text) {
+  const cleaned = String(text ?? "").replace(/[^0-9.-]/g, "");
+  return cleaned === "" ? null : Math.round(Number(cleaned));
+}
+
+// ------------------------------------------------------------ 시작
+
+async function init() {
+  try {
+    [META, SETTINGS] = await Promise.all([api("/meta"), api("/settings")]);
+  } catch (err) {
+    document.getElementById("home-stats").innerHTML = `<p class="bad">서버에 연결하지 못했습니다: ${esc(err.message)}<br>
+      PowerShell에서 서버가 켜져 있는지, 데이터베이스 표 추가(alembic upgrade head)를 했는지 확인해 주세요.</p>`;
+    return;
+  }
+  const cats = Object.entries(META.categories);
+  fillSelect("calc-category", cats);
+  fillSelect("pf-category", cats);
+  fillSelect("pf-status", Object.entries(META.product_statuses));
+  fillSelect("of-market", Object.entries(META.markets));
+  fillSelect("sf-method", Object.entries(META.order_methods));
+  fillSelect("order-filter", Object.entries(META.order_statuses), "전체 주문");
+  renderSettings();
+  await loadSuppliers();
+  loadHome();
+}
+
+// ------------------------------------------------------------ 한눈에 보기
+
+async function loadHome() {
+  const box = document.getElementById("home-stats");
+  const todo = document.getElementById("home-todo");
+  let s;
+  try { s = await api("/summary"); } catch (err) { box.innerHTML = `<p class="bad">${esc(err.message)}</p>`; return; }
+  const c = s.status_counts;
+  box.innerHTML = `
+    <div class="stat"><div class="label">이번 달 주문</div><div class="value">${s.month_orders}건</div></div>
+    <div class="stat"><div class="label">이번 달 매출</div><div class="value">${won(s.month_sales)}</div></div>
+    <div class="stat"><div class="label">이번 달 예상 이익</div><div class="value">${won(s.month_profit)}</div></div>
+    <div class="stat ${c.new ? "alert" : ""}"><div class="label">발주 대기</div><div class="value">${c.new}건</div></div>
+    <div class="stat ${c.ordered ? "alert" : ""}"><div class="label">송장 기다리는 중</div><div class="value">${c.ordered}건</div></div>
+    <div class="stat ${c.invoiced ? "alert" : ""}"><div class="label">마켓에 송장 입력 필요</div><div class="value">${c.invoiced}건</div></div>`;
+
+  const items = [];
+  if (!s.supplier_count) items.push("공급사를 먼저 등록하세요 → <b>공급사</b> 탭");
+  else if (!s.product_count) items.push("상품을 등록하세요 → <b>상품</b> 탭 (엑셀로 한꺼번에 올릴 수 있어요)");
+  if (c.new) items.push(`발주 대기 주문 ${c.new}건 → <b>주문·발주</b>에서 발주서 엑셀을 받아 공급사에 보내세요.`);
+  if (c.ordered) items.push(`송장을 기다리는 주문 ${c.ordered}건 → 공급사 송장 엑셀이 오면 올리세요. 출고 마감이 지났으면 공급사에 확인하세요.`);
+  if (c.invoiced) items.push(`송장을 받은 주문 ${c.invoiced}건 → 스마트스토어 송장 엑셀을 받아 판매자센터에 올리세요.`);
+  if (!items.length) items.push("지금 처리할 일이 없습니다.");
+  todo.innerHTML = items.map(t => `<li>${t}</li>`).join("");
+}
+
+// ------------------------------------------------------------ 가격 계산기
+
+function priceTableHtml(rows, minProfit) {
+  return `<div class="table-wrap"><table>
+    <tr><th>마켓</th><th class="num">수수료율</th><th class="num">추천 판매가</th><th class="num">판매가</th>
+      <th class="num">수수료</th><th class="num">남는 이익</th></tr>
+    ${rows.map(r => `<tr>
+      <td>${esc(r.market_label)}</td><td class="num">${r.fee_rate}%</td>
+      <td class="num">${won(r.recommended_price)}</td><td class="num"><b>${won(r.price)}</b></td>
+      <td class="num">${won(r.fee)}</td>
+      <td class="num ${r.below_min ? "bad" : "good"}">${won(r.profit)}${r.below_min ? " (최소 이익 미달)" : ""}</td>
+    </tr>`).join("")}
+  </table></div>
+  <p class="help" style="margin-top:8px">최소 이익 ${won(minProfit)} 기준. 이익 = 판매가 - 수수료 - 공급가 - 택배비</p>`;
+}
+
+async function runCalc() {
+  const supply = num("calc-supply");
+  const box = document.getElementById("calc-result");
+  if (supply === null) { box.innerHTML = `<p class="bad">공급가를 넣어 주세요.</p>`; return; }
+  try {
+    const data = await api("/price-preview", {
+      method: "POST",
+      body: { supply_price: supply, shipping_fee: num("calc-ship") || 0, category: val("calc-category"), sale_price: num("calc-sale") },
+    });
+    box.innerHTML = `<p>원가(공급가 + 택배비): <b>${won(data.cost)}</b></p>` + priceTableHtml(data.rows, data.min_profit);
+  } catch (err) { box.innerHTML = `<p class="bad">${esc(err.message)}</p>`; }
+}
+
+// ------------------------------------------------------------ 공급사
+
+async function loadSuppliers() {
+  try { SUPPLIERS = await api("/suppliers"); } catch (err) { return; }
+  const entries = SUPPLIERS.map(s => [s.supplier_id, s.name]);
+  fillSelect("pf-supplier", entries, "공급사 고르기");
+  fillSelect("import-supplier", entries, "공급사 고르기");
+  const area = document.getElementById("suppliers-area");
+  if (!SUPPLIERS.length) { area.innerHTML = `<p class="empty">아직 등록된 공급사가 없습니다.</p>`; return; }
+  area.innerHTML = `<table>
+    <tr><th>이름</th><th>발주 방법</th><th class="num">기본 택배비</th><th class="num">도서산간</th><th>출고 마감</th><th class="num">상품 수</th><th>메모</th><th></th></tr>
+    ${SUPPLIERS.map(s => `<tr>
+      <td><b>${esc(s.name)}</b>${s.site_url ? `<br><a href="${esc(s.site_url)}" target="_blank" rel="noopener">사이트</a>` : ""}
+        ${s.contact ? `<br><span class="help">${esc(s.contact)}</span>` : ""}</td>
+      <td>${esc(META.order_methods[s.order_method] || s.order_method)}</td>
+      <td class="num">${s.default_shipping_fee ? won(s.default_shipping_fee) : "포함"}</td>
+      <td class="num">${won(s.remote_area_fee)}</td>
+      <td>${esc(s.cutoff_time || "-")}</td>
+      <td class="num">${s.product_count}</td>
+      <td>${esc(s.memo || "")}</td>
+      <td><div class="row">
+        <button class="secondary small" onclick="editSupplier(${s.supplier_id})">고치기</button>
+        <button class="danger small" onclick="deleteSupplier(${s.supplier_id})">지우기</button>
+      </div></td>
+    </tr>`).join("")}
+  </table>`;
+}
+
+function resetSupplierForm() {
+  EDITING_SUPPLIER_ID = null;
+  document.getElementById("supplier-form-title").textContent = "공급사 등록";
+  ["sf-name", "sf-url", "sf-contact", "sf-cutoff", "sf-memo"].forEach(id => setVal(id, ""));
+  setVal("sf-ship", 0); setVal("sf-remote", 0); setVal("sf-method", "excel");
+}
+
+function editSupplier(id) {
+  const s = SUPPLIERS.find(x => x.supplier_id === id);
+  EDITING_SUPPLIER_ID = id;
+  document.getElementById("supplier-form-title").textContent = `공급사 고치기: ${s.name}`;
+  setVal("sf-name", s.name); setVal("sf-url", s.site_url); setVal("sf-contact", s.contact);
+  setVal("sf-method", s.order_method); setVal("sf-ship", s.default_shipping_fee);
+  setVal("sf-remote", s.remote_area_fee); setVal("sf-cutoff", s.cutoff_time); setVal("sf-memo", s.memo);
+  window.scrollTo({ top: 0, behavior: "smooth" });
+}
+
+async function saveSupplier() {
+  const body = {
+    name: val("sf-name"), site_url: val("sf-url") || null, contact: val("sf-contact") || null,
+    order_method: val("sf-method"), default_shipping_fee: num("sf-ship") || 0,
+    remote_area_fee: num("sf-remote") || 0, cutoff_time: val("sf-cutoff") || null, memo: val("sf-memo") || null,
+  };
+  if (!body.name) { showMsg("supplier-msg", "공급사 이름을 넣어 주세요.", "err"); return; }
+  try {
+    if (EDITING_SUPPLIER_ID) await api(`/suppliers/${EDITING_SUPPLIER_ID}`, { method: "PUT", body });
+    else await api("/suppliers", { method: "POST", body });
+    showMsg("supplier-msg", `"${body.name}" 저장했습니다.`);
+    resetSupplierForm();
+    loadSuppliers();
+  } catch (err) { showMsg("supplier-msg", err.message, "err"); }
+}
+
+async function deleteSupplier(id) {
+  const s = SUPPLIERS.find(x => x.supplier_id === id);
+  if (!confirm(`"${s.name}" 공급사를 지울까요?`)) return;
+  try { await api(`/suppliers/${id}`, { method: "DELETE" }); loadSuppliers(); }
+  catch (err) { alert(err.message); }
+}
+
+// ------------------------------------------------------------ 상품
+
+async function loadProducts() {
+  const area = document.getElementById("products-area");
+  try { PRODUCTS = await api("/products"); } catch (err) { area.innerHTML = `<p class="bad">${esc(err.message)}</p>`; return; }
+  if (!PRODUCTS.length) { area.innerHTML = `<p class="empty">아직 등록된 상품이 없습니다.</p>`; return; }
+  const marketKeys = Object.keys(META.markets);
+  area.innerHTML = PRODUCTS.map(p => `
+    <div class="product-card">
+      <div class="head-row" style="margin-bottom:6px">
+        <div>
+          <div class="title">${esc(p.name)} <span class="badge ${esc(p.status)}">${esc(META.product_statuses[p.status])}</span></div>
+          <div class="sub">${esc(p.supplier_name)} · ${esc(META.categories[p.category])} · 원산지 ${esc(p.origin || "(입력 필요)")}</div>
+        </div>
+        <div class="row">
+          <button class="secondary small" onclick="showNotice(${p.product_id})">표시 문구</button>
+          <button class="secondary small" onclick="openProductForm(${p.product_id})">고치기</button>
+          <button class="danger small" onclick="deleteProduct(${p.product_id})">지우기</button>
+        </div>
+      </div>
+      <div class="table-wrap"><table>
+        <tr><th>옵션</th><th class="num">원가</th>
+          ${marketKeys.map(k => `<th class="num">${esc(META.markets[k])}<br>판매가 / 이익</th>`).join("")}</tr>
+        ${p.options.map(o => `<tr>
+          <td>${esc(o.label)}${o.is_soldout ? ' <span class="badge soldout">품절</span>' : ""}
+            <div class="help" style="margin:0">${esc([o.weight, o.count, o.grade].filter(Boolean).join(" · "))}</div></td>
+          <td class="num">${won(o.cost)}<div class="help" style="margin:0">택배비 ${won(o.shipping_fee)}</div></td>
+          ${o.prices.map(r => `<td class="num"><b>${won(r.price)}</b><br><span class="${r.below_min ? "bad" : "good"}">${won(r.profit)}</span></td>`).join("")}
+        </tr>`).join("")}
+      </table></div>
+    </div>`).join("");
+}
+
+function updateRiceFields() {
+  const isRice = val("pf-category") === "rice";
+  document.querySelectorAll(".rice-only").forEach(el => el.classList.toggle("hidden", !isRice));
+}
+
+function suggestedSmartstorePrice(supply, ship) {
+  if (!SETTINGS || supply === null) return null;
+  const rate = Number(SETTINGS.fee_rates.smartstore || 0) / 100;
+  const minProfit = Number(SETTINGS.min_profit[val("pf-category")] || 0);
+  const unit = Number(SETTINGS.price_unit || 100);
+  return Math.ceil(((supply + (ship || 0) + minProfit) / (1 - rate)) / unit - 1e-9) * unit;
+}
+
+function refreshOptionHints() {
+  document.querySelectorAll("#pf-options .option-row").forEach(row => {
+    const supply = toInt(row.querySelector('[data-k="supply_price"]').value);
+    const ship = toInt(row.querySelector('[data-k="shipping_fee"]').value);
+    const price = suggestedSmartstorePrice(supply, ship);
+    row.querySelector('[data-k="sale_price"]').placeholder = price ? `추천 ${price.toLocaleString("ko-KR")}` : "비우면 추천가";
+  });
+}
+
+function addOptionRow(o = {}) {
+  const supplier = SUPPLIERS.find(s => String(s.supplier_id) === val("pf-supplier"));
+  const ship = o.shipping_fee ?? (supplier ? supplier.default_shipping_fee : 0);
+  const row = document.createElement("div");
+  row.className = "option-row";
+  row.dataset.optionId = o.option_id || "";
+  row.innerHTML = `
+    <input data-k="label" placeholder="옵션명 (예: 5kg 중과)" value="${esc(o.label)}">
+    <input data-k="weight" placeholder="중량" value="${esc(o.weight)}">
+    <input data-k="count" placeholder="수량 (예: 15~18과)" value="${esc(o.count)}">
+    <input data-k="grade" placeholder="등급" value="${esc(o.grade)}">
+    <input data-k="supplier_code" placeholder="공급사 코드" value="${esc(o.supplier_code)}">
+    <input data-k="supply_price" type="number" min="0" placeholder="공급가" value="${esc(o.supply_price)}">
+    <input data-k="shipping_fee" type="number" min="0" placeholder="택배비" value="${esc(ship)}">
+    <input data-k="sale_price" type="number" min="0" value="${esc(o.sale_price)}">
+    <div class="row" style="gap:4px">
+      <label class="hint"><input type="checkbox" data-k="is_soldout" style="width:auto" ${o.is_soldout ? "checked" : ""}> 품절</label>
+      <button class="danger small" title="옵션 지우기">×</button>
+    </div>`;
+  row.querySelector("button").onclick = () => row.remove();
+  row.querySelectorAll('[data-k="supply_price"], [data-k="shipping_fee"]').forEach(el => el.addEventListener("input", refreshOptionHints));
+  document.getElementById("pf-options").appendChild(row);
+  refreshOptionHints();
+}
+
+function openProductForm(productId) {
+  EDITING_PRODUCT_ID = productId || null;
+  const p = productId ? PRODUCTS.find(x => x.product_id === productId) : {};
+  document.getElementById("product-form-title").textContent = productId ? `상품 고치기: ${p.name}` : "상품 입력";
+  setVal("pf-supplier", p.supplier_id); setVal("pf-name", p.name); setVal("pf-category", p.category || "fruit");
+  setVal("pf-status", p.status || "ready"); setVal("pf-origin", p.origin); setVal("pf-producer", p.producer);
+  setVal("pf-storage", p.storage); setVal("pf-packing", p.packing_info); setVal("pf-variety", p.variety);
+  setVal("pf-harvest", p.harvest_year); setVal("pf-grade", p.grade); setVal("pf-image", p.image_url); setVal("pf-memo", p.memo);
+  document.getElementById("pf-options").innerHTML = "";
+  (p.options && p.options.length ? p.options : [{}]).forEach(addOptionRow);
+  updateRiceFields();
+  document.getElementById("product-form-msg").className = "msg";
+  toggle("product-form", true);
+  document.getElementById("product-form").scrollIntoView({ behavior: "smooth" });
+}
+
+function closeProductForm() { toggle("product-form", false); }
+
+async function saveProduct() {
+  const options = [...document.querySelectorAll("#pf-options .option-row")].map(row => {
+    const get = k => row.querySelector(`[data-k="${k}"]`).value.trim();
+    return {
+      option_id: row.dataset.optionId ? Number(row.dataset.optionId) : null,
+      label: get("label"), weight: get("weight") || null, count: get("count") || null, grade: get("grade") || null,
+      supplier_code: get("supplier_code") || null, supply_price: toInt(get("supply_price")),
+      shipping_fee: toInt(get("shipping_fee")) || 0, sale_price: toInt(get("sale_price")),
+      is_soldout: row.querySelector('[data-k="is_soldout"]').checked,
+    };
+  });
+  if (!val("pf-supplier")) { showMsg("product-form-msg", "공급사를 골라 주세요.", "err"); return; }
+  if (!val("pf-name")) { showMsg("product-form-msg", "상품명을 넣어 주세요.", "err"); return; }
+  if (!options.length || options.some(o => !o.label || o.supply_price === null)) {
+    showMsg("product-form-msg", "옵션마다 옵션명과 공급가를 넣어 주세요.", "err"); return;
+  }
+  const body = {
+    supplier_id: Number(val("pf-supplier")), name: val("pf-name"), category: val("pf-category"),
+    status: val("pf-status"), origin: val("pf-origin") || null, producer: val("pf-producer") || null,
+    storage: val("pf-storage") || null, packing_info: val("pf-packing") || null, variety: val("pf-variety") || null,
+    harvest_year: val("pf-harvest") || null, grade: val("pf-grade") || null, image_url: val("pf-image") || null,
+    memo: val("pf-memo") || null, options,
+  };
+  try {
+    if (EDITING_PRODUCT_ID) await api(`/products/${EDITING_PRODUCT_ID}`, { method: "PUT", body });
+    else await api("/products", { method: "POST", body });
+    closeProductForm();
+    await loadProducts();
+  } catch (err) { showMsg("product-form-msg", err.message, "err"); }
+}
+
+async function deleteProduct(id) {
+  const p = PRODUCTS.find(x => x.product_id === id);
+  if (!confirm(`"${p.name}" 상품을 지울까요?`)) return;
+  try { await api(`/products/${id}`, { method: "DELETE" }); loadProducts(); }
+  catch (err) { alert(err.message); }
+}
+
+async function showNotice(id) {
+  const p = PRODUCTS.find(x => x.product_id === id);
+  try {
+    const data = await api(`/products/${id}/notice`);
+    document.getElementById("notice-title").textContent = `표시 문구: ${p.name}`;
+    document.getElementById("notice-text").textContent = data.text;
+    toggle("notice-box", true);
+    document.getElementById("notice-box").scrollIntoView({ behavior: "smooth" });
+  } catch (err) { alert(err.message); }
+}
+
+async function copyNotice() {
+  const text = document.getElementById("notice-text").textContent;
+  try { await navigator.clipboard.writeText(text); alert("복사했습니다. 스마트스토어 상세 설명에 붙여 넣으세요."); }
+  catch (err) { alert("자동 복사가 안 됩니다. 글자를 마우스로 끌어서 복사해 주세요."); }
+}
+
+// 엑셀로 한꺼번에 올리기
+const IMPORT_HEADERS = ["상품명", "품목(과일/채소/쌀/잡곡/기타)", "원산지", "생산자", "보관방법", "옵션명",
+  "중량", "수량", "등급", "공급사상품코드", "공급가", "택배비(비우면 공급사 기본값)"];
+
+function downloadImportTemplate() {
+  saveWorkbook([["상품", [
+    IMPORT_HEADERS,
+    ["충주 꿀사과", "과일", "국산(충북 충주)", "충주농원", "냉장 보관", "3kg 소과", "3kg", "15~18과", "상", "A-101", 12000, ""],
+    ["충주 꿀사과", "과일", "국산(충북 충주)", "충주농원", "냉장 보관", "5kg 중과", "5kg", "20~24과", "상", "A-102", 18000, ""],
+  ]]], "상품_올리기_양식.xlsx");
+}
+
+function categoryCode(text) {
+  const t = String(text || "").trim();
+  const found = Object.entries(META.categories).find(([code, label]) => t === label || t === code);
+  return found ? found[0] : (t ? null : "fruit");
+}
+
+async function readImportFile() {
+  const file = document.getElementById("import-file").files[0];
+  const preview = document.getElementById("import-preview");
+  IMPORT_ROWS = [];
+  if (!file) return;
+  let rows;
+  try { rows = await readSheetRows(file); } catch (err) { showMsg("import-msg", "엑셀을 읽지 못했습니다: " + err.message, "err"); return; }
+  const problems = [];
+  rows.forEach((r, i) => {
+    const name = pick(r, "상품명");
+    const label = pick(r, "옵션명");
+    if (!name && !label) return;
+    const category = categoryCode(pick(r, "품목"));
+    const supply = toInt(pick(r, "공급가"));
+    const shipText = pick(r, "택배비");
+    if (!name || !label || supply === null || !category) {
+      problems.push(`${i + 2}번째 줄: 상품명, 옵션명, 공급가, 품목을 확인해 주세요.`);
+      return;
+    }
+    IMPORT_ROWS.push({
+      product_name: name, category, origin: pick(r, "원산지") || null, producer: pick(r, "생산자") || null,
+      storage: pick(r, "보관") || null, option_label: label, weight: pick(r, "중량") || null,
+      count: pick(r, "수량") || null, grade: pick(r, "등급") || null, supplier_code: pick(r, "공급사상품코드", "상품코드") || null,
+      supply_price: supply, shipping_fee: shipText === "" ? null : toInt(shipText),
+    });
+  });
+  if (problems.length) showMsg("import-msg", problems.join("\n"), "err");
+  else document.getElementById("import-msg").className = "msg";
+  if (!IMPORT_ROWS.length) { preview.innerHTML = `<p class="empty">올릴 줄이 없습니다.</p>`; return; }
+  preview.innerHTML = `<div class="table-wrap"><table>
+    <tr><th>상품명</th><th>품목</th><th>옵션명</th><th>원산지</th><th class="num">공급가</th><th class="num">택배비</th></tr>
+    ${IMPORT_ROWS.map(r => `<tr><td>${esc(r.product_name)}</td><td>${esc(META.categories[r.category])}</td><td>${esc(r.option_label)}</td>
+      <td>${esc(r.origin || "")}</td><td class="num">${won(r.supply_price)}</td>
+      <td class="num">${r.shipping_fee === null ? "공급사 기본값" : won(r.shipping_fee)}</td></tr>`).join("")}
+  </table></div>
+  <div class="row" style="margin-top:10px"><button onclick="submitImport()">이 ${IMPORT_ROWS.length}줄 등록하기</button></div>`;
+}
+
+async function submitImport() {
+  if (!val("import-supplier")) { showMsg("import-msg", "공급사를 골라 주세요.", "err"); return; }
+  try {
+    const data = await api("/products/import", { method: "POST", body: { supplier_id: Number(val("import-supplier")), rows: IMPORT_ROWS } });
+    showMsg("import-msg", `새 상품 ${data.products_created}개, 옵션 ${data.options_added}개를 등록했습니다.`);
+    document.getElementById("import-preview").innerHTML = "";
+    document.getElementById("import-file").value = "";
+    IMPORT_ROWS = [];
+    loadProducts();
+  } catch (err) { showMsg("import-msg", err.message, "err"); }
+}
+
+// ------------------------------------------------------------ 주문·발주
+
+function fillOrderOptions() {
+  const entries = [];
+  PRODUCTS.forEach(p => p.options.forEach(o => {
+    entries.push([o.option_id, `${p.name} / ${o.label}${o.is_soldout ? " (품절)" : ""}`]);
+  }));
+  const current = val("of-option");
+  fillSelect("of-option", entries, entries.length ? "상품·옵션 고르기" : "먼저 상품을 등록하세요");
+  setVal("of-option", current);
+}
+
+function findOption(optionId) {
+  for (const p of PRODUCTS) {
+    const o = p.options.find(x => x.option_id === optionId);
+    if (o) return o;
+  }
+  return null;
+}
+
+function fillOrderAmount() {
+  const option = findOption(Number(val("of-option")));
+  if (!option) return;
+  const row = option.prices.find(r => r.market === val("of-market"));
+  if (row) setVal("of-amount", row.price * (num("of-qty") || 1));
+}
+
+async function saveOrder() {
+  const body = {
+    market: val("of-market"), market_order_no: val("of-no"), option_id: Number(val("of-option")) || null,
+    quantity: num("of-qty") || 1, receiver_name: val("of-receiver"), receiver_phone: val("of-phone"),
+    zipcode: val("of-zip") || null, address: val("of-address"), delivery_memo: val("of-memo") || null,
+    sale_amount: num("of-amount"),
+  };
+  if (!body.market_order_no || !body.option_id || !body.receiver_name || !body.receiver_phone || !body.address || body.sale_amount === null) {
+    showMsg("order-form-msg", "주문번호, 상품·옵션, 받는 분, 연락처, 주소, 결제 금액을 모두 넣어 주세요.", "err");
+    return;
+  }
+  try {
+    const order = await api("/orders", { method: "POST", body });
+    showMsg("order-form-msg", `저장했습니다. 예상 이익 ${won(order.profit)}`);
+    ["of-no", "of-receiver", "of-phone", "of-zip", "of-address", "of-memo"].forEach(id => setVal(id, ""));
+    loadOrders();
+  } catch (err) { showMsg("order-form-msg", err.message, "err"); }
+}
+
+async function loadOrders() {
+  const area = document.getElementById("orders-area");
+  const status = val("order-filter");
+  try { ORDERS = await api("/orders" + (status ? `?status=${status}` : "")); }
+  catch (err) { area.innerHTML = `<p class="bad">${esc(err.message)}</p>`; return; }
+  if (!ORDERS.length) { area.innerHTML = `<p class="empty">주문이 없습니다.</p>`; return; }
+  area.innerHTML = `<table>
+    <tr><th><input type="checkbox" style="width:auto" onclick="document.querySelectorAll('.order-check').forEach(c => c.checked = this.checked)"></th>
+      <th>상태</th><th>마켓 / 주문번호</th><th>상품</th><th class="num">수량</th><th>받는 분</th>
+      <th class="num">결제 금액</th><th class="num">예상 이익</th><th>송장</th><th></th></tr>
+    ${ORDERS.map(o => `<tr>
+      <td><input type="checkbox" class="order-check" style="width:auto" value="${o.order_id}"></td>
+      <td><span class="badge ${esc(o.status)}">${esc(META.order_statuses[o.status])}</span></td>
+      <td>${esc(META.markets[o.market])}<br><span class="help">${esc(o.market_order_no)}</span></td>
+      <td>${esc(o.product_name)}<br><span class="help">${esc(o.option_label)} · ${esc(o.supplier_name)}</span></td>
+      <td class="num">${o.quantity}</td>
+      <td>${esc(o.receiver_name)}<br><span class="help">${esc(o.receiver_phone)}</span></td>
+      <td class="num">${won(o.sale_amount)}</td>
+      <td class="num ${o.profit < 0 ? "bad" : ""}">${won(o.profit)}</td>
+      <td>${o.tracking_no ? `${esc(o.courier)}<br>${esc(o.tracking_no)}` : "-"}</td>
+      <td><div class="row" style="gap:4px">
+        ${o.status !== "cancelled" && o.status !== "shipped" ? `<button class="secondary small" onclick="enterTracking(${o.order_id})">송장 직접 입력</button>` : ""}
+        ${o.status !== "cancelled" ? `<button class="danger small" onclick="cancelOrder(${o.order_id})">취소</button>` : ""}
+      </div></td>
+    </tr>`).join("")}
+  </table>`;
+}
+
+function checkedOrderIds() {
+  return [...document.querySelectorAll(".order-check:checked")].map(c => Number(c.value));
+}
+
+async function downloadPurchaseSheets() {
+  let ids = checkedOrderIds();
+  if (!ids.length) {
+    ids = ORDERS.filter(o => o.status === "new").map(o => o.order_id);
+    if (!ids.length) { showMsg("orders-msg", "발주할 주문을 고르세요. (고르지 않으면 발주 대기 주문 전체를 받습니다)", "err"); return; }
+  }
+  try {
+    const data = await api("/orders/purchase-sheet", { method: "POST", body: { order_ids: ids } });
+    const header = ["관리번호", "마켓", "주문번호", "상품명", "옵션", "공급사 상품코드", "수량", "받는 분", "연락처",
+      "우편번호", "주소", "배송 메모", "택배사", "송장번호"];
+    const names = Object.keys(data.groups);
+    for (const name of names) {
+      const rows = data.groups[name].map(o => [o.order_id, META.markets[o.market], o.market_order_no, o.product_name,
+        o.option_label, o.supplier_code || "", o.quantity, o.receiver_name, o.receiver_phone, o.zipcode || "",
+        o.address, o.delivery_memo || "", o.courier || "", o.tracking_no || ""]);
+      saveWorkbook([["발주서", [header, ...rows]]], `발주서_${name}_${today()}.xlsx`);
+    }
+    showMsg("orders-msg", `발주서 ${names.length}개를 받았습니다 (${names.join(", ")}).\n공급사에 보내면서 "택배사"와 "송장번호" 칸을 채워서 돌려 달라고 하세요.`);
+    loadOrders();
+  } catch (err) { showMsg("orders-msg", err.message, "err"); }
+}
+
+async function uploadTracking() {
+  const input = document.getElementById("tracking-file");
+  const file = input.files[0];
+  if (!file) return;
+  let rows;
+  try { rows = await readSheetRows(file); } catch (err) { showMsg("orders-msg", "엑셀을 읽지 못했습니다: " + err.message, "err"); return; }
+  input.value = "";
+  const payload = [];
+  let missing = 0;
+  rows.forEach(r => {
+    const id = toInt(pick(r, "관리번호"));
+    const courier = pick(r, "택배사");
+    const tracking = pick(r, "송장번호", "운송장번호", "송장");
+    if (!id) return;
+    if (!courier || !tracking) { missing++; return; }
+    payload.push({ order_id: id, courier, tracking_no: tracking.replace(/[^0-9A-Za-z]/g, "") });
+  });
+  if (!payload.length) {
+    showMsg("orders-msg", "송장번호가 들어 있는 줄이 없습니다. 우리 발주서 양식의 \"관리번호\", \"택배사\", \"송장번호\" 칸이 있는지 확인해 주세요.", "err");
+    return;
+  }
+  try {
+    const data = await api("/orders/tracking", { method: "POST", body: { rows: payload } });
+    let text = `송장 ${data.updated}건을 넣었습니다.`;
+    if (missing) text += `\n송장번호가 비어 있는 줄 ${missing}건은 건너뛰었습니다. 공급사에 확인하세요.`;
+    if (data.skipped.length) text += `\n취소됐거나 없는 주문 ${data.skipped.length}건은 건너뛰었습니다 (관리번호 ${data.skipped.join(", ")}).`;
+    showMsg("orders-msg", text);
+    loadOrders();
+  } catch (err) { showMsg("orders-msg", err.message, "err"); }
+}
+
+async function enterTracking(orderId) {
+  const courier = prompt("택배사 (예: CJ대한통운, 우체국택배, 한진택배, 롯데택배, 로젠택배)");
+  if (!courier) return;
+  const tracking = prompt("송장번호 (숫자만)");
+  if (!tracking) return;
+  try {
+    await api("/orders/tracking", { method: "POST", body: { rows: [{ order_id: orderId, courier: courier.trim(), tracking_no: tracking.replace(/[^0-9A-Za-z]/g, "") }] } });
+    loadOrders();
+  } catch (err) { alert(err.message); }
+}
+
+async function cancelOrder(orderId) {
+  const o = ORDERS.find(x => x.order_id === orderId);
+  let warn = "이 주문을 취소로 바꿀까요?";
+  if (o.status === "ordered" || o.status === "invoiced") {
+    warn = "이미 공급사에 발주한 주문입니다.\n공급사에 먼저 연락해서 출고를 막았는지 확인하세요.\n이미 출고됐다면 마켓에서 취소 대신 반품으로 처리해야 합니다.\n\n그래도 취소로 바꿀까요?";
+  }
+  if (!confirm(warn)) return;
+  try { await api(`/orders/${orderId}/status`, { method: "PUT", body: { status: "cancelled" } }); loadOrders(); }
+  catch (err) { alert(err.message); }
+}
+
+function downloadSmartstoreInvoice() {
+  const targets = ORDERS.filter(o => o.market === "smartstore" && o.status === "invoiced" && o.tracking_no);
+  if (!targets.length) { showMsg("orders-msg", "송장을 받았고 아직 스마트스토어에 입력하지 않은 주문이 없습니다. (목록 위 선택칸을 '전체 주문'이나 '송장 받음'으로 두세요)", "err"); return; }
+  const rows = targets.map(o => [o.market_order_no, "택배,등기,소포", o.courier, o.tracking_no]);
+  saveWorkbook([["발송처리", [["상품주문번호", "배송방법", "택배사", "송장번호"], ...rows]]], `스마트스토어_송장_${today()}.xlsx`);
+  showMsg("orders-msg", `${targets.length}건의 송장 엑셀을 받았습니다.\n스마트스토어 판매자센터 → 판매관리 → 발주(주문)확인/발송관리 → 엑셀 일괄발송으로 올리세요.\n올린 뒤 그 주문들을 골라 [마켓 입력 끝]을 누르세요.\n(판매자센터 양식과 칸 이름이 다르면 알려주세요. 바로 맞춰 드릴게요)`, "info");
+}
+
+async function markMarketShipped() {
+  const ids = checkedOrderIds();
+  if (!ids.length) { showMsg("orders-msg", "마켓에 송장 입력을 마친 주문을 골라 주세요.", "err"); return; }
+  try {
+    const data = await api("/orders/market-shipped", { method: "POST", body: { order_ids: ids } });
+    showMsg("orders-msg", `${data.updated}건을 "마켓 송장 입력 끝"으로 바꿨습니다. (송장이 없는 주문은 건너뜁니다)`);
+    loadOrders();
+  } catch (err) { showMsg("orders-msg", err.message, "err"); }
+}
+
+// ------------------------------------------------------------ 설정
+
+function renderSettings() {
+  document.getElementById("set-fees").innerHTML = Object.entries(META.markets).map(([k, label]) =>
+    `<label class="field">${esc(label)}<input type="number" step="0.01" min="0" data-fee="${k}" value="${esc(SETTINGS.fee_rates[k])}"></label>`).join("");
+  document.getElementById("set-profits").innerHTML = Object.entries(META.categories).map(([k, label]) =>
+    `<label class="field">${esc(label)}<input type="number" min="0" step="100" data-profit="${k}" value="${esc(SETTINGS.min_profit[k])}"></label>`).join("");
+  setVal("set-unit", SETTINGS.price_unit);
+  setVal("set-phone", SETTINGS.cs_phone);
+  setVal("set-claim", SETTINGS.claim_hours);
+}
+
+async function saveSettings() {
+  const fee_rates = {};
+  document.querySelectorAll("[data-fee]").forEach(el => { fee_rates[el.dataset.fee] = Number(el.value || 0); });
+  const min_profit = {};
+  document.querySelectorAll("[data-profit]").forEach(el => { min_profit[el.dataset.profit] = Number(el.value || 0); });
+  try {
+    SETTINGS = await api("/settings", {
+      method: "PUT",
+      body: { fee_rates, min_profit, price_unit: num("set-unit") || 100, cs_phone: val("set-phone"), claim_hours: num("set-claim") || 24 },
+    });
+    renderSettings();
+    showMsg("settings-msg", "저장했습니다. 상품 탭의 판매가가 새 설정으로 다시 계산됩니다.");
+  } catch (err) { showMsg("settings-msg", err.message, "err"); }
+}
+
+init();
+</script>
+</body>
+</html>
