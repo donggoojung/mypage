@@ -110,6 +110,9 @@ class AgriOrder(Base, TimestampMixin):
     ordered_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     purchase_ordered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     memo: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # 고객이 마켓에서 낸 취소·반품·교환 요청. claim_type: cancel / return / exchange, claim_status: requested / done / rejected
+    claim_type: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    claim_status: Mapped[str | None] = mapped_column(String(16), nullable=True)
 
     option: Mapped[AgriOption] = relationship(lazy="joined")
 

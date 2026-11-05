@@ -15,11 +15,13 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, object_session
 
+from app.core.config import get_settings as get_app_settings
 from app.core.database import get_db_sync
 from app.integrations.markets.naver_commerce import NaverCommerceError, get_smartstore_client
 from app.models.agri import AgriListing, AgriOption, AgriOrder, AgriProduct, AgriSetting, AgriSupplier
 from app.services import agri_pricing as pricing
 from app.services import agri_smartstore as smartstore
+from app.services import agri_smartstore_orders as orders_sync
 
 router = APIRouter(prefix="/api/agri", tags=["agri"])
 
@@ -47,6 +49,7 @@ def meta() -> dict:
         "order_statuses": pricing.ORDER_STATUSES,
         "product_statuses": pricing.PRODUCT_STATUSES,
         "order_methods": pricing.ORDER_METHODS,
+        "smartstore_mode": "mock" if get_app_settings().use_mock_naver_commerce else "real",
     }
 
 
@@ -514,6 +517,9 @@ def _order_dict(o: AgriOrder) -> dict:
         "ordered_at": o.ordered_at.isoformat() if o.ordered_at else None,
         "purchase_ordered_at": o.purchase_ordered_at.isoformat() if o.purchase_ordered_at else None,
         "memo": o.memo,
+        "claim_type": o.claim_type,
+        "claim_status": o.claim_status,
+        "is_practice": o.market_order_no.startswith(orders_sync.MOCK_PREFIX),
     }
 
 
@@ -626,6 +632,98 @@ def mark_market_shipped(payload: OrderIdsIn, session: Session = Depends(get_db_s
             updated += 1
     session.commit()
     return {"updated": updated}
+
+
+# ---------------------------------------------------------------- 스마트스토어 주문 연동
+
+
+def _mode(client) -> str:
+    return "mock" if client.is_mock else "real"
+
+
+class SyncIn(BaseModel):
+    hours: int = Field(24, ge=1, le=24 * 14)
+
+
+@router.post("/smartstore/orders/sync")
+async def smartstore_sync_orders(payload: SyncIn | None = None, session: Session = Depends(get_db_sync)) -> dict:
+    """스마트스토어에서 최근 바뀐 주문(새 주문, 취소·반품 요청)을 가져온다. 마켓에는 아무것도 바꾸지 않는다."""
+    client = get_smartstore_client()
+    hours = payload.hours if payload else 24
+    try:
+        return await orders_sync.sync_orders(session, client, load_settings(session), hours)
+    except NaverCommerceError as exc:
+        raise HTTPException(502, str(exc)) from exc
+
+
+@router.post("/smartstore/orders/dispatch")
+async def smartstore_dispatch_orders(payload: OrderIdsIn, session: Session = Depends(get_db_sync)) -> dict:
+    """송장을 받은 주문의 택배사·송장번호를 스마트스토어에 입력(발송 처리)한다."""
+    client = get_smartstore_client()
+    try:
+        result = await orders_sync.dispatch_orders(session, client, payload.order_ids)
+    except NaverCommerceError as exc:
+        raise HTTPException(502, str(exc)) from exc
+    result["mode"] = _mode(client)
+    return result
+
+
+class ClaimApproveIn(BaseModel):
+    confirmed: bool = False
+
+
+@router.post("/orders/{order_id}/smartstore/claim/approve")
+async def smartstore_approve_claim(
+    order_id: int, payload: ClaimApproveIn | None = None, session: Session = Depends(get_db_sync)
+) -> dict:
+    """고객의 취소·반품 요청을 승인한다. 이미 공급사에 발주한 주문은 확인(confirmed)을 받아야 한다."""
+    order = session.get(AgriOrder, order_id)
+    if order is None:
+        raise HTTPException(404, "주문을 찾을 수 없습니다.")
+    client = get_smartstore_client()
+    try:
+        await orders_sync.approve_claim(session, client, order, bool(payload and payload.confirmed))
+    except orders_sync.NeedsConfirmation as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except orders_sync.OrderActionError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    except NaverCommerceError as exc:
+        raise HTTPException(502, str(exc)) from exc
+    return {"order": _order_dict(order), "mode": _mode(client)}
+
+
+class PracticeOrderIn(BaseModel):
+    option_id: int
+    quantity: int = Field(1, ge=1, le=99)
+
+
+@router.post("/smartstore/orders/practice")
+def smartstore_practice_order(payload: PracticeOrderIn, session: Session = Depends(get_db_sync)) -> dict:
+    """연습 모드에서 고객이 주문한 것처럼 가짜 주문을 만든다. [주문 가져오기]를 누르면 들어온다."""
+    client = get_smartstore_client()
+    try:
+        mo = orders_sync.create_practice_order(session, client, load_settings(session), payload.option_id, payload.quantity)
+    except orders_sync.OrderActionError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return {"product_order_id": mo.product_order_id, "paid_amount": mo.paid_amount}
+
+
+class PracticeClaimIn(BaseModel):
+    kind: Literal["cancel", "return"]
+
+
+@router.post("/smartstore/orders/practice/{product_order_id}/claim")
+def smartstore_practice_claim(product_order_id: str, payload: PracticeClaimIn) -> dict:
+    """연습 모드에서 고객이 취소·반품을 요청한 것처럼 만든다 (승인 연습용)."""
+    client = get_smartstore_client()
+    if not client.is_mock:
+        raise HTTPException(400, "연습 모드에서만 쓸 수 있습니다.")
+    for mo in client.orders:  # type: ignore[attr-defined]
+        if mo.product_order_id == product_order_id:
+            mo.claim_type = payload.kind.upper()
+            mo.claim_status = f"{payload.kind.upper()}_REQUEST"
+            return {"product_order_id": product_order_id}
+    raise HTTPException(404, "연습 주문을 찾을 수 없습니다. 서버를 다시 켰다면 연습 주문을 새로 만들어 주세요.")
 
 
 @router.get("/summary")

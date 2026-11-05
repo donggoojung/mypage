@@ -123,6 +123,8 @@
   .badge.invoiced { background: #fde8f3; color: #8f1c5b; }
   .badge.shipped { background: #e3f4e4; color: #1f6b23; }
   .badge.cancelled { background: #eee; color: #777; text-decoration: line-through; }
+  .badge.claim { background: #fbe9e9; color: var(--danger); font-weight: 600; }
+  .badge.practice { background: #eef0ff; color: #3b45a8; }
   .badge.selling { background: #e3f4e4; color: #1f6b23; }
   .badge.soldout, .badge.stopped { background: #fbe9e9; color: var(--danger); }
   .bad { color: var(--danger); font-weight: 600; }
@@ -313,7 +315,7 @@
         <h2>주문 입력</h2>
         <button class="secondary small" onclick="toggle('order-form')">열기/닫기</button>
       </div>
-      <p class="help">스마트스토어 자동 연동 전까지는 판매자센터의 새 주문을 보고 여기에 옮겨 적습니다.</p>
+      <p class="help">스마트스토어 주문은 아래 [스마트스토어 자동 연동]에서 가져옵니다. 다른 마켓 주문이나 자동 연동이 안 될 때만 여기에 직접 적습니다.</p>
       <div id="order-form">
         <div class="grid">
           <label class="field">마켓<select id="of-market" onchange="fillOrderAmount()"></select></label>
@@ -329,6 +331,30 @@
         </div>
         <div class="row" style="margin-top:12px"><button onclick="saveOrder()">주문 저장</button></div>
         <div id="order-form-msg" class="msg"></div>
+      </div>
+    </div>
+
+    <div class="card" id="ss-order-box">
+      <div class="head-row">
+        <h2>스마트스토어 자동 연동 <span id="ss-mode-badge" class="badge"></span></h2>
+      </div>
+      <p class="help">
+        <b>주문 가져오기</b>: 스마트스토어의 새 주문과 고객의 취소·반품 요청을 가져옵니다. 스마트스토어에는 아무것도 바꾸지 않습니다.<br>
+        <b>송장 보내기</b>: 공급사에게 받은 송장번호를 스마트스토어에 입력(발송 처리)합니다. 목록에서 주문을 고르면 그 주문만, 고르지 않으면 "송장 받음" 주문 전부를 보냅니다.<br>
+        취소·반품 요청이 온 주문은 목록에 빨간 표시가 뜹니다. 공급사 출고 여부를 확인한 뒤에 [승인]을 누르세요.
+      </p>
+      <div class="row">
+        <button onclick="syncSmartstoreOrders()">스마트스토어 주문 가져오기</button>
+        <button class="secondary" onclick="dispatchSmartstore()">스마트스토어에 송장 보내기</button>
+      </div>
+      <div id="ss-orders-msg" class="msg"></div>
+      <div id="practice-box" class="hidden" style="margin-top:12px;padding-top:12px;border-top:1px dashed var(--line, #ccc)">
+        <p class="help"><b>연습용 주문 만들기</b> (연습 모드에서만 보입니다): 고객이 주문한 것처럼 가짜 주문을 만들고, 위의 [주문 가져오기]로 가져오는 연습을 합니다. 실제 스토어와는 상관없습니다.</p>
+        <div class="row">
+          <select id="pr-option" style="max-width:360px"></select>
+          <input id="pr-qty" type="number" min="1" value="1" style="width:70px">
+          <button class="secondary" onclick="makePracticeOrder()">연습 주문 만들기</button>
+        </div>
       </div>
     </div>
 
@@ -476,7 +502,9 @@ async function api(path, options = {}) {
     if (Array.isArray(detail)) {
       detail = "입력값을 확인해 주세요: " + detail.map(d => (d.loc || []).slice(1).join(" > ")).join(", ");
     }
-    throw new Error(detail || `서버 오류 (${res.status})`);
+    const error = new Error(detail || `서버 오류 (${res.status})`);
+    error.status = res.status;
+    throw error;
   }
   return data;
 }
@@ -971,6 +999,18 @@ function fillOrderOptions() {
   const current = val("of-option");
   fillSelect("of-option", entries, entries.length ? "상품·옵션 고르기" : "먼저 상품을 등록하세요");
   setVal("of-option", current);
+  const practice = val("pr-option");
+  fillSelect("pr-option", entries, entries.length ? "연습 주문할 상품·옵션" : "먼저 상품을 등록하세요");
+  setVal("pr-option", practice);
+  renderSmartstoreMode();
+}
+
+function renderSmartstoreMode() {
+  const mock = META.smartstore_mode !== "real";
+  const badge = document.getElementById("ss-mode-badge");
+  badge.textContent = mock ? "연습 모드" : "실제 연동";
+  badge.className = "badge " + (mock ? "practice" : "shipped");
+  toggle("practice-box", mock);
 }
 
 function findOption(optionId) {
@@ -1019,8 +1059,8 @@ async function loadOrders() {
       <th class="num">결제 금액</th><th class="num">예상 이익</th><th>송장</th><th></th></tr>
     ${ORDERS.map(o => `<tr>
       <td><input type="checkbox" class="order-check" style="width:auto" value="${o.order_id}"></td>
-      <td><span class="badge ${esc(o.status)}">${esc(META.order_statuses[o.status])}</span></td>
-      <td>${esc(META.markets[o.market])}<br><span class="help">${esc(o.market_order_no)}</span></td>
+      <td><span class="badge ${esc(o.status)}">${esc(META.order_statuses[o.status])}</span>${claimBadge(o)}</td>
+      <td>${esc(META.markets[o.market])}${o.is_practice ? ` <span class="badge practice">연습</span>` : ""}<br><span class="help">${esc(o.market_order_no)}</span></td>
       <td>${esc(o.product_name)}<br><span class="help">${esc(o.option_label)} · ${esc(o.supplier_name)}</span></td>
       <td class="num">${o.quantity}</td>
       <td>${esc(o.receiver_name)}<br><span class="help">${esc(o.receiver_phone)}</span></td>
@@ -1030,9 +1070,88 @@ async function loadOrders() {
       <td><div class="row" style="gap:4px">
         ${o.status !== "cancelled" && o.status !== "shipped" ? `<button class="secondary small" onclick="enterTracking(${o.order_id})">송장 직접 입력</button>` : ""}
         ${o.status !== "cancelled" ? `<button class="danger small" onclick="cancelOrder(${o.order_id})">취소</button>` : ""}
+        ${o.market === "smartstore" && o.claim_status === "requested" && (o.claim_type === "cancel" || o.claim_type === "return")
+          ? `<button class="danger small" onclick="approveClaim(${o.order_id})">${o.claim_type === "cancel" ? "취소 승인" : "반품 승인"}</button>` : ""}
+        ${o.is_practice && META.smartstore_mode !== "real" && o.status !== "cancelled" && !o.claim_status
+          ? `<button class="secondary small" onclick="practiceClaim('${esc(o.market_order_no)}', 'cancel')">(연습) 고객 취소 요청</button>` : ""}
       </div></td>
     </tr>`).join("")}
   </table>`;
+}
+
+const CLAIM_LABELS = { cancel: "취소", return: "반품", exchange: "교환" };
+
+function claimBadge(o) {
+  if (!o.claim_type || !o.claim_status) return "";
+  const label = CLAIM_LABELS[o.claim_type] || o.claim_type;
+  if (o.claim_status === "requested") return `<br><span class="badge claim">고객 ${esc(label)} 요청</span>`;
+  if (o.claim_status === "rejected") return `<br><span class="badge">${esc(label)} 거절됨</span>`;
+  return `<br><span class="badge">${esc(label)} 처리 끝</span>`;
+}
+
+async function syncSmartstoreOrders() {
+  showMsg("ss-orders-msg", "스마트스토어에서 주문을 가져오는 중...", "info");
+  try {
+    const d = await api("/smartstore/orders/sync", { method: "POST", body: { hours: 24 * 7 } });
+    const parts = [`새 주문 ${d.created}건을 가져왔습니다.`];
+    if (d.claims_updated) parts.push(`취소·반품 상태가 바뀐 주문 ${d.claims_updated}건 (목록의 빨간 표시를 확인하세요).`);
+    if (d.cancelled) parts.push(`마켓에서 취소·반품이 끝난 주문 ${d.cancelled}건을 취소로 바꿨습니다.`);
+    if (d.marked_shipped) parts.push(`판매자센터에서 이미 발송 처리된 주문 ${d.marked_shipped}건을 "마켓 송장 입력 끝"으로 바꿨습니다.`);
+    if (d.skipped.length) parts.push(`가져오지 못한 주문 ${d.skipped.length}건:\n` + d.skipped.map(s => `- ${s.product_order_id}: ${s.reason}`).join("\n"));
+    if (!d.created && !d.claims_updated && !d.cancelled && !d.marked_shipped && !d.skipped.length) parts.push("바뀐 것이 없습니다.");
+    parts.push(`(최근 7일 ${d.checked}건 확인${d.mode === "mock" ? ", 연습 모드" : ""})`);
+    showMsg("ss-orders-msg", parts.join("\n"), d.skipped.length ? "err" : "ok");
+    loadOrders();
+  } catch (err) { showMsg("ss-orders-msg", err.message, "err"); }
+}
+
+async function dispatchSmartstore() {
+  let ids = checkedOrderIds();
+  if (!ids.length) ids = ORDERS.filter(o => o.market === "smartstore" && o.status === "invoiced").map(o => o.order_id);
+  if (!ids.length) { showMsg("ss-orders-msg", "보낼 주문이 없습니다. 먼저 공급사에게 송장을 받아 입력하세요 (상태가 \"송장 받음\"인 주문만 보냅니다).", "err"); return; }
+  if (!confirm(`${ids.length}건의 송장을 스마트스토어에 입력합니다.\n입력하면 고객에게 \"배송 시작\" 알림이 갑니다. 송장번호가 맞는지 확인하셨나요?`)) return;
+  try {
+    const d = await api("/smartstore/orders/dispatch", { method: "POST", body: { order_ids: ids } });
+    const parts = [`발송 처리 ${d.sent.length}건을 보냈습니다.${d.mode === "mock" ? " (연습 모드)" : ""}`];
+    if (d.failed.length) parts.push(`거절된 주문 ${d.failed.length}건:\n` + d.failed.map(f => `- ${f.market_order_no}: ${f.reason}`).join("\n"));
+    if (d.skipped.length) parts.push(`보내지 않은 주문 ${d.skipped.length}건:\n` + d.skipped.map(s => `- ${s.market_order_no}: ${s.reason}`).join("\n"));
+    if (d.warnings.length) parts.push("참고:\n" + d.warnings.map(w => `- ${w}`).join("\n"));
+    showMsg("ss-orders-msg", parts.join("\n"), d.failed.length || d.skipped.length ? "err" : "ok");
+    loadOrders();
+  } catch (err) { showMsg("ss-orders-msg", err.message, "err"); }
+}
+
+async function approveClaim(orderId, confirmed = false) {
+  const o = ORDERS.find(x => x.order_id === orderId);
+  const label = CLAIM_LABELS[o.claim_type];
+  if (!confirmed && !confirm(`고객의 ${label} 요청을 승인할까요?\n승인하면 되돌릴 수 없고 고객에게 환불됩니다.`)) return;
+  try {
+    await api(`/orders/${orderId}/smartstore/claim/approve`, { method: "POST", body: { confirmed } });
+    showMsg("ss-orders-msg", `${label}을(를) 승인했습니다.`);
+    loadOrders();
+  } catch (err) {
+    if (err.status === 409) {
+      if (confirm(err.message + "\n\n확인했고, 그래도 승인할까요?")) approveClaim(orderId, true);
+      return;
+    }
+    showMsg("ss-orders-msg", err.message, "err");
+  }
+}
+
+async function makePracticeOrder() {
+  const optionId = Number(val("pr-option"));
+  if (!optionId) { showMsg("ss-orders-msg", "연습 주문할 상품·옵션을 고르세요.", "err"); return; }
+  try {
+    const d = await api("/smartstore/orders/practice", { method: "POST", body: { option_id: optionId, quantity: Number(val("pr-qty")) || 1 } });
+    showMsg("ss-orders-msg", `연습 주문 ${d.product_order_id} (${won(d.paid_amount)})을 만들었습니다. [스마트스토어 주문 가져오기]를 눌러 보세요.`, "info");
+  } catch (err) { showMsg("ss-orders-msg", err.message, "err"); }
+}
+
+async function practiceClaim(no, kind) {
+  try {
+    await api(`/smartstore/orders/practice/${encodeURIComponent(no)}/claim`, { method: "POST", body: { kind } });
+    showMsg("ss-orders-msg", "고객이 취소를 요청한 것으로 만들었습니다. [스마트스토어 주문 가져오기]를 누르면 목록에 반영됩니다.", "info");
+  } catch (err) { showMsg("ss-orders-msg", err.message, "err"); }
 }
 
 function checkedOrderIds() {
