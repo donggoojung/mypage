@@ -27,6 +27,9 @@ class Settings(BaseSettings):
     use_mock_coupang_price_checker: bool = True
     # Gemini(LLM) 가공 — 키가 없거나 이 값이 true면 규칙 기반 Mock으로 동작한다.
     use_mock_llm: bool = True
+    # 농산물 스마트스토어(네이버 커머스 API) 상품 등록. true(기본값)면 가짜 응답으로 동작해
+    # 실제 스토어에는 아무것도 올라가지 않는다. 실제로 올리려면 NAVER_CLIENT_ID/SECRET을 채우고 false로 바꾼다.
+    use_mock_naver_commerce: bool = True
 
     # 오픈마켓 API 키
     naver_client_id: str = ""

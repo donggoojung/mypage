@@ -114,6 +114,27 @@ class AgriOrder(Base, TimestampMixin):
     option: Mapped[AgriOption] = relationship(lazy="joined")
 
 
+class AgriListing(Base, TimestampMixin):
+    """상품 하나가 어느 마켓에 어떤 번호로 올라가 있는지 (같은 마켓에 두 번 등록하는 것을 막는다)."""
+
+    __tablename__ = "agri_listings"
+    __table_args__ = (UniqueConstraint("product_id", "market"),)
+
+    listing_id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    product_id: Mapped[int] = mapped_column(ForeignKey("agri_products.product_id", ondelete="CASCADE"), nullable=False)
+    market: Mapped[str] = mapped_column(String(32), nullable=False)
+    # 스마트스토어: 원상품번호(originProductNo) / 채널상품번호
+    market_product_no: Mapped[str] = mapped_column(String(64), nullable=False)
+    channel_product_no: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # registered(등록됨) / stopped(판매 중지)
+    status: Mapped[str] = mapped_column(String(32), default="registered", nullable=False)
+    # Mock(가짜)으로 올린 기록인지. 진짜 마켓에 올린 것과 섞이지 않게 구분한다.
+    is_mock: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    # 등록 당시 옵션별 판매가 {"옵션명": 가격} — 나중에 가격이 바뀌었는지 비교하는 용도
+    registered_prices: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
+    registered_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
 class AgriSetting(Base, TimestampMixin):
     """마켓 수수료, 품목별 최소 이익 같은 설정값 (키 하나에 값 묶음)."""
 

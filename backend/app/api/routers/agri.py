@@ -13,11 +13,13 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, object_session
 
 from app.core.database import get_db_sync
-from app.models.agri import AgriOption, AgriOrder, AgriProduct, AgriSetting, AgriSupplier
+from app.integrations.markets.naver_commerce import NaverCommerceError, get_smartstore_client
+from app.models.agri import AgriListing, AgriOption, AgriOrder, AgriProduct, AgriSetting, AgriSupplier
 from app.services import agri_pricing as pricing
+from app.services import agri_smartstore as smartstore
 
 router = APIRouter(prefix="/api/agri", tags=["agri"])
 
@@ -53,12 +55,24 @@ def get_settings(session: Session = Depends(get_db_sync)) -> dict:
     return load_settings(session)
 
 
+class SmartstoreSettingsIn(BaseModel):
+    leaf_category_ids: dict[str, str] = {}
+    delivery_company: str = Field("CJGLS", min_length=1)
+    return_fee: int = Field(3000, ge=0)
+    exchange_fee: int = Field(6000, ge=0)
+    stock_quantity: int = Field(999, ge=0)
+    origin_area_code: str = Field("00", min_length=1)
+    display_on_register: bool = False
+
+
 class SettingsIn(BaseModel):
     fee_rates: dict[str, float]
     min_profit: dict[str, int]
     price_unit: int = Field(100, ge=1)
     cs_phone: str = ""
     claim_hours: int = Field(24, ge=1)
+    # 보내지 않으면 저장돼 있던 스마트스토어 등록 설정을 그대로 둔다.
+    smartstore: SmartstoreSettingsIn | None = None
 
 
 @router.put("/settings")
@@ -69,11 +83,20 @@ def put_settings(payload: SettingsIn, session: Session = Depends(get_db_sync)) -
     for category, amount in payload.min_profit.items():
         if category not in pricing.CATEGORIES or amount < 0:
             raise HTTPException(400, f"최소 이익을 확인해 주세요: {category} {amount}")
+    if payload.smartstore:
+        for category, number in payload.smartstore.leaf_category_ids.items():
+            if category not in pricing.CATEGORIES or (number and not number.strip().isdigit()):
+                raise HTTPException(400, f"스마트스토어 카테고리 번호는 숫자만 넣어 주세요: {category} {number}")
     row = session.get(AgriSetting, pricing.SETTINGS_KEY)
     if row is None:
         row = AgriSetting(key=pricing.SETTINGS_KEY, value={})
         session.add(row)
-    row.value = payload.model_dump()
+    data = payload.model_dump(exclude={"smartstore"})
+    if payload.smartstore is not None:
+        data["smartstore"] = payload.smartstore.model_dump()
+    elif row.value.get("smartstore"):
+        data["smartstore"] = row.value["smartstore"]
+    row.value = data
     session.commit()
     return load_settings(session)
 
@@ -227,8 +250,14 @@ def _option_dict(o: AgriOption, category: str, settings: dict) -> dict:
     }
 
 
-def _product_dict(p: AgriProduct, settings: dict) -> dict:
+def _product_dict(p: AgriProduct, settings: dict, listings: dict[int, AgriListing] | None = None) -> dict:
+    if listings is None:
+        listings = {}
+        found = smartstore.get_listing(object_session(p), p.product_id) if object_session(p) else None
+        if found:
+            listings[p.product_id] = found
     return {
+        "listings": {smartstore.MARKET: smartstore.listing_dict(listings.get(p.product_id))},
         "product_id": p.product_id,
         "supplier_id": p.supplier_id,
         "supplier_name": p.supplier.name if p.supplier else None,
@@ -252,7 +281,11 @@ def _product_dict(p: AgriProduct, settings: dict) -> dict:
 def list_products(session: Session = Depends(get_db_sync)) -> list[dict]:
     settings = load_settings(session)
     rows = session.execute(select(AgriProduct).order_by(AgriProduct.product_id.desc())).unique().scalars().all()
-    return [_product_dict(p, settings) for p in rows]
+    listings = {
+        listing.product_id: listing
+        for listing in session.execute(select(AgriListing).where(AgriListing.market == smartstore.MARKET)).scalars()
+    }
+    return [_product_dict(p, settings, listings) for p in rows]
 
 
 def _apply_product(session: Session, product: AgriProduct, payload: ProductIn) -> None:
@@ -310,6 +343,11 @@ def delete_product(product_id: int, session: Session = Depends(get_db_sync)) -> 
     product = session.get(AgriProduct, product_id)
     if product is None:
         raise HTTPException(404, "상품을 찾을 수 없습니다.")
+    listing = smartstore.get_listing(session, product_id)
+    if listing and not listing.is_mock:
+        raise HTTPException(
+            400, "스마트스토어에 등록된 상품입니다. 스마트스토어센터에서 상품을 내린 뒤 지울 수 있습니다."
+        )
     option_ids = [o.option_id for o in product.options]
     if option_ids:
         used = session.execute(
@@ -328,6 +366,35 @@ def product_notice(product_id: int, session: Session = Depends(get_db_sync)) -> 
     if product is None:
         raise HTTPException(404, "상품을 찾을 수 없습니다.")
     return {"text": pricing.product_notice_text(product, load_settings(session))}
+
+
+@router.get("/products/{product_id}/smartstore/preview")
+def smartstore_preview(product_id: int, session: Session = Depends(get_db_sync)) -> dict:
+    """스마트스토어에 아무것도 보내지 않고, 등록 전 점검 결과와 보낼 내용을 보여준다."""
+    product = session.get(AgriProduct, product_id)
+    if product is None:
+        raise HTTPException(404, "상품을 찾을 수 없습니다.")
+    result = smartstore.preview(product, load_settings(session), smartstore.get_listing(session, product_id))
+    result["mode"] = "mock" if get_smartstore_client().is_mock else "real"
+    return result
+
+
+@router.post("/products/{product_id}/smartstore/register")
+async def smartstore_register(product_id: int, session: Session = Depends(get_db_sync)) -> dict:
+    """점검을 통과한 상품을 스마트스토어에 등록한다 (기본은 Mock이라 실제 스토어에는 올라가지 않는다)."""
+    product = session.get(AgriProduct, product_id)
+    if product is None:
+        raise HTTPException(404, "상품을 찾을 수 없습니다.")
+    client = get_smartstore_client()
+    try:
+        listing = await smartstore.register_product(session, product, load_settings(session), client)
+    except smartstore.SmartstoreProblems as exc:
+        raise HTTPException(400, "등록 전에 고칠 것이 있습니다: " + " / ".join(exc.problems)) from exc
+    except smartstore.AlreadyListed as exc:
+        raise HTTPException(400, str(exc)) from exc
+    except NaverCommerceError as exc:
+        raise HTTPException(502, str(exc)) from exc
+    return {"listing": smartstore.listing_dict(listing), "mode": "mock" if client.is_mock else "real"}
 
 
 class ImportRow(BaseModel):

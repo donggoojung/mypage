@@ -291,6 +291,17 @@
         <pre class="notice" id="notice-text"></pre>
       </div>
 
+      <div id="ss-box" class="card hidden" style="background:#fafbf9;margin-bottom:12px">
+        <div class="head-row">
+          <h3 style="margin:0" id="ss-title">스마트스토어 등록</h3>
+          <div class="row">
+            <button class="small" id="ss-register-btn" onclick="registerSmartstore()">등록하기</button>
+            <button class="secondary small" onclick="toggle('ss-box', false)">닫기</button>
+          </div>
+        </div>
+        <div id="ss-body"></div>
+      </div>
+
       <div id="products-area"><p class="empty">불러오는 중...</p></div>
     </div>
   </section>
@@ -387,6 +398,21 @@
       <h2>품목별 최소 이익 (원, 주문 1건 기준)</h2>
       <p class="help">과일 4,000원은 확정된 값입니다. 채소·쌀·잡곡·기타는 정하시기 전까지 임시로 3,000원입니다.</p>
       <div class="grid" id="set-profits"></div>
+    </div>
+    <div class="card">
+      <h2>스마트스토어 등록 설정</h2>
+      <p class="help">상품을 스마트스토어에 올릴 때 쓰는 값입니다. 카테고리 번호는 스마트스토어센터 상품등록 화면에서 해당 품목의 세분류를 골라 확인하세요.
+        비어 있으면 상품 탭의 '스마트스토어 등록' 점검에서 알려 드립니다.</p>
+      <div class="grid" id="set-ss-cats"></div>
+      <div class="grid" style="margin-top:12px">
+        <label class="field">택배사 코드<input id="set-ss-courier" placeholder="예: CJGLS"></label>
+        <label class="field">반품 택배비 (원)<input id="set-ss-return" type="number" min="0"></label>
+        <label class="field">교환 택배비 (원)<input id="set-ss-exchange" type="number" min="0"></label>
+        <label class="field">재고 수량 (옵션마다)<input id="set-ss-stock" type="number" min="0"></label>
+        <label class="field">원산지 코드 (국산)<input id="set-ss-origin"></label>
+      </div>
+      <label class="hint" style="display:block;margin-top:10px"><input type="checkbox" id="set-ss-display" style="width:auto">
+        등록하자마자 고객에게 보이게 하기 (꺼 두면 '전시 중지' 상태로 올라가고, 스마트스토어센터에서 확인한 뒤 켭니다)</label>
     </div>
     <div class="card">
       <h2>기타</h2>
@@ -675,10 +701,12 @@ async function loadProducts() {
     <div class="product-card">
       <div class="head-row" style="margin-bottom:6px">
         <div>
-          <div class="title">${esc(p.name)} <span class="badge ${esc(p.status)}">${esc(META.product_statuses[p.status])}</span></div>
+          <div class="title">${esc(p.name)} <span class="badge ${esc(p.status)}">${esc(META.product_statuses[p.status])}</span>
+            ${listingBadge(p.listings && p.listings.smartstore)}</div>
           <div class="sub">${esc(p.supplier_name)} · ${esc(META.categories[p.category])} · 원산지 ${esc(p.origin || "(입력 필요)")}</div>
         </div>
         <div class="row">
+          <button class="small" onclick="openSmartstore(${p.product_id})">스마트스토어 등록</button>
           <button class="secondary small" onclick="showNotice(${p.product_id})">표시 문구</button>
           <button class="secondary small" onclick="openProductForm(${p.product_id})">고치기</button>
           <button class="danger small" onclick="deleteProduct(${p.product_id})">지우기</button>
@@ -809,6 +837,54 @@ async function showNotice(id) {
     toggle("notice-box", true);
     document.getElementById("notice-box").scrollIntoView({ behavior: "smooth" });
   } catch (err) { alert(err.message); }
+}
+
+// ------------------------------------------------------------ 스마트스토어 등록
+
+let SS_PRODUCT_ID = null;
+
+function listingBadge(listing) {
+  if (!listing) return "";
+  return listing.is_mock
+    ? '<span class="badge new" title="연습용 가짜 등록입니다. 실제 스토어에는 올라가지 않았습니다.">스마트스토어 연습 등록</span>'
+    : '<span class="badge shipped">스마트스토어 등록됨</span>';
+}
+
+async function openSmartstore(id) {
+  SS_PRODUCT_ID = id;
+  const p = PRODUCTS.find(x => x.product_id === id);
+  document.getElementById("ss-title").textContent = `스마트스토어 등록: ${p.name}`;
+  const body = document.getElementById("ss-body");
+  body.innerHTML = '<p class="empty">점검하는 중...</p>';
+  toggle("ss-box", true);
+  document.getElementById("ss-box").scrollIntoView({ behavior: "smooth" });
+  try {
+    const r = await api(`/products/${id}/smartstore/preview`);
+    const btn = document.getElementById("ss-register-btn");
+    btn.disabled = r.problems.length > 0 || !!(r.listing && r.listing.is_mock === (r.mode === "mock"));
+    const parts = [];
+    parts.push(r.mode === "mock"
+      ? '<p class="help"><b>연습 모드</b>입니다. 등록해도 실제 스마트스토어에는 아무것도 올라가지 않습니다.</p>'
+      : '<p class="help"><b>실제 모드</b>입니다. 등록하면 스마트스토어에 상품이 올라갑니다.</p>');
+    if (r.listing) parts.push(`<p class="help">이미 ${r.listing.is_mock ? "연습으로" : ""} 등록된 상품입니다. (번호 ${esc(r.listing.market_product_no)})</p>`);
+    if (r.problems.length) parts.push(`<p class="bad">등록 전에 고칠 것</p><ul>${r.problems.map(t => `<li>${esc(t)}</li>`).join("")}</ul>`);
+    else parts.push('<p class="good">등록 전 점검을 통과했습니다.</p>');
+    if (r.prices.length) parts.push(`<div class="table-wrap"><table><tr><th>옵션</th><th class="num">스마트스토어 판매가</th><th class="num">예상 이익</th></tr>${
+      r.prices.map(x => `<tr><td>${esc(x.label)}</td><td class="num"><b>${won(x.price)}</b></td><td class="num">${won(x.profit)}</td></tr>`).join("")}</table></div>`);
+    if (!r.payload_verified) parts.push('<p class="help">※ 네이버로 보내는 세부 항목(상품정보고시 유형, 원산지 코드 등)은 아직 실제 키로 확인하지 못했습니다. 실제 모드로 처음 올릴 때는 스마트스토어센터에서 결과를 꼭 확인하세요.</p>');
+    body.innerHTML = parts.join("");
+  } catch (err) { body.innerHTML = `<p class="bad">${esc(err.message)}</p>`; }
+}
+
+async function registerSmartstore() {
+  const p = PRODUCTS.find(x => x.product_id === SS_PRODUCT_ID);
+  if (!confirm(`"${p.name}" 상품을 스마트스토어에 등록할까요?`)) return;
+  try {
+    const r = await api(`/products/${SS_PRODUCT_ID}/smartstore/register`, { method: "POST" });
+    await loadProducts();
+    toggle("ss-box", false);
+    alert(r.mode === "mock" ? "연습 등록을 마쳤습니다. (실제 스토어에는 올라가지 않았습니다)" : "스마트스토어에 등록했습니다. 스마트스토어센터에서 내용을 확인해 주세요.");
+  } catch (err) { document.getElementById("ss-body").insertAdjacentHTML("afterbegin", `<p class="bad">${esc(err.message)}</p>`); }
 }
 
 async function copyNotice() {
@@ -1066,6 +1142,12 @@ function renderSettings() {
   setVal("set-unit", SETTINGS.price_unit);
   setVal("set-phone", SETTINGS.cs_phone);
   setVal("set-claim", SETTINGS.claim_hours);
+  const ss = SETTINGS.smartstore || {};
+  document.getElementById("set-ss-cats").innerHTML = Object.entries(META.categories).map(([k, label]) =>
+    `<label class="field">${esc(label)} 카테고리 번호<input data-ss-cat="${k}" inputmode="numeric" value="${esc((ss.leaf_category_ids || {})[k])}"></label>`).join("");
+  setVal("set-ss-courier", ss.delivery_company); setVal("set-ss-return", ss.return_fee); setVal("set-ss-exchange", ss.exchange_fee);
+  setVal("set-ss-stock", ss.stock_quantity); setVal("set-ss-origin", ss.origin_area_code);
+  document.getElementById("set-ss-display").checked = !!ss.display_on_register;
 }
 
 async function saveSettings() {
@@ -1073,10 +1155,18 @@ async function saveSettings() {
   document.querySelectorAll("[data-fee]").forEach(el => { fee_rates[el.dataset.fee] = Number(el.value || 0); });
   const min_profit = {};
   document.querySelectorAll("[data-profit]").forEach(el => { min_profit[el.dataset.profit] = Number(el.value || 0); });
+  const leaf_category_ids = {};
+  document.querySelectorAll("[data-ss-cat]").forEach(el => { leaf_category_ids[el.dataset.ssCat] = el.value.trim(); });
+  const smartstore = {
+    leaf_category_ids, delivery_company: val("set-ss-courier") || "CJGLS",
+    return_fee: num("set-ss-return") ?? 3000, exchange_fee: num("set-ss-exchange") ?? 6000,
+    stock_quantity: num("set-ss-stock") ?? 999, origin_area_code: val("set-ss-origin") || "00",
+    display_on_register: document.getElementById("set-ss-display").checked,
+  };
   try {
     SETTINGS = await api("/settings", {
       method: "PUT",
-      body: { fee_rates, min_profit, price_unit: num("set-unit") || 100, cs_phone: val("set-phone"), claim_hours: num("set-claim") || 24 },
+      body: { fee_rates, min_profit, price_unit: num("set-unit") || 100, cs_phone: val("set-phone"), claim_hours: num("set-claim") || 24, smartstore },
     });
     renderSettings();
     showMsg("settings-msg", "저장했습니다. 상품 탭의 판매가가 새 설정으로 다시 계산됩니다.");

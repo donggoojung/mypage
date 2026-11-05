@@ -1,4 +1,4 @@
-from app.models.agri import AgriOption, AgriOrder, AgriProduct, AgriSetting, AgriSupplier
+from app.models.agri import AgriListing, AgriOption, AgriOrder, AgriProduct, AgriSetting, AgriSupplier
 from app.models.customer_inquiry import CustomerInquiry
 from app.models.customer_order import CustomerOrder
 from app.models.generated_asset import GeneratedAsset
@@ -22,4 +22,5 @@ __all__ = [
     "AgriOption",
     "AgriOrder",
     "AgriSetting",
+    "AgriListing",
 ]

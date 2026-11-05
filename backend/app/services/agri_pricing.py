@@ -70,6 +70,19 @@ DEFAULT_SETTINGS: dict = {
     "price_unit": 100,
     "cs_phone": "",
     "claim_hours": 24,
+    # 스마트스토어 상품 등록에 쓰는 값. 비어 있는 항목은 등록 전 점검에서 알려준다.
+    "smartstore": {
+        # 품목별 스마트스토어 세분류 카테고리 번호 (판매자센터 상품등록 화면에서 확인)
+        "leaf_category_ids": {"fruit": "", "vegetable": "", "rice": "", "grain": "", "etc": ""},
+        "delivery_company": "CJGLS",
+        "return_fee": 3000,
+        "exchange_fee": 6000,
+        "stock_quantity": 999,
+        # 네이버 원산지 코드. 국산 코드는 네이버 "원산지 코드 조회"로 확인이 필요하다 (미검증 기본값).
+        "origin_area_code": "00",
+        # false(기본값)면 실제 등록 시 "전시 중지" 상태로 올린다. 판매자센터에서 내용을 확인한 뒤 켠다.
+        "display_on_register": False,
+    },
 }
 
 SETTINGS_KEY = "general"
