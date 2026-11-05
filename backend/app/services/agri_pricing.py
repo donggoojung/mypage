@@ -104,12 +104,14 @@ DEFAULT_SETTINGS: dict = {
         "oplc_import": "",  # 수입산 원산지코드 (필요할 때만)
         "send_days": 2,  # 발송예정일수 (일반상품 최대 3일)
         "stock_quantity": 999,
-        # 상품정보고시(농수축산물 20번) 항목코드. 설명서 본문에 없어서 입점 후 확인해 넣는다.
-        # name 품목·명칭 / weight 중량·수량 / producer 생산자 / origin 원산지 / packing 제조(포장)연월일
-        # storage 보관방법 / law 관련법상 표시사항 / phone 소비자상담 전화번호 / composition 상품구성
+        # 상품정보고시(농수축산물 = 품목코드 20) 항목코드. 롯데온 "상품정보제공고시" PDF(23년 1월 개정 반영)에서 확인한 값이다.
+        # name 품목·명칭 / weight 용량·수량·크기 / producer 생산자·수입자 / origin 원산지 / packing 제조연월일·소비기한
+        # law 유전자변형·지리적 표시 / livestock 축산물 표시 / import 수입 농수축산물 문구 / composition 상품구성
+        # storage 보관방법 / caution 소비자 안전 주의사항 / phone 소비자상담 전화번호
         "notice_codes": {
-            "name": "", "weight": "", "producer": "", "origin": "", "packing": "",
-            "storage": "", "law": "", "phone": "", "composition": "",
+            "name": "1460", "weight": "0570", "producer": "0610", "origin": "1730", "packing": "1760",
+            "law": "1680", "livestock": "1690", "import": "1700", "composition": "0560",
+            "storage": "0590", "caution": "1470", "phone": "0510",
         },
         "display_on_register": False,
     },

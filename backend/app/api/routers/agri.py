@@ -21,6 +21,7 @@ from app.integrations.markets.lotteon import LotteonError, get_lotteon_client
 from app.integrations.markets.naver_commerce import NaverCommerceError, get_smartstore_client
 from app.models.agri import AgriListing, AgriOption, AgriOrder, AgriProduct, AgriSetting, AgriSupplier
 from app.services import agri_pricing as pricing
+from app.services import agri_order_actions as order_actions
 from app.services import agri_lotteon as lotteon_products
 from app.services import agri_lotteon_orders as lotteon_orders
 from app.services import agri_smartstore as smartstore
@@ -531,7 +532,7 @@ class OrderIn(BaseModel):
     memo: str | None = None
 
 
-def _order_dict(o: AgriOrder) -> dict:
+def _order_dict(o: AgriOrder, settings: dict | None = None) -> dict:
     option = o.option
     product = option.product if option else None
     return {
@@ -563,6 +564,9 @@ def _order_dict(o: AgriOrder) -> dict:
         "memo": o.memo,
         "claim_type": o.claim_type,
         "claim_status": o.claim_status,
+        "delayed_until": o.delayed_until.isoformat() if o.delayed_until else None,
+        "delay_reason": o.delay_reason,
+        "overdue": order_actions.is_overdue(o, settings) if settings is not None else False,
         "is_practice": o.market_order_no.startswith(orders_sync.MOCK_PREFIX),
     }
 
@@ -572,7 +576,8 @@ def list_orders(status: OrderStatus | None = None, session: Session = Depends(ge
     query = select(AgriOrder).order_by(AgriOrder.order_id.desc())
     if status:
         query = query.where(AgriOrder.status == status)
-    return [_order_dict(o) for o in session.execute(query).unique().scalars().all()]
+    settings = load_settings(session)
+    return [_order_dict(o, settings) for o in session.execute(query).unique().scalars().all()]
 
 
 @router.post("/orders")
@@ -768,6 +773,53 @@ def smartstore_practice_claim(product_order_id: str, payload: PracticeClaimIn) -
             mo.claim_status = f"{payload.kind.upper()}_REQUEST"
             return {"product_order_id": product_order_id}
     raise HTTPException(404, "연습 주문을 찾을 수 없습니다. 서버를 다시 켰다면 연습 주문을 새로 만들어 주세요.")
+
+
+# ---------------------------------------------------------------- 발송 지연(2-10), 발송 전 취소 처리(2-9)
+
+
+class DelayIn(BaseModel):
+    order_ids: list[int] = Field(min_length=1)
+    due_date: str  # 2026-11-09
+    reason: Literal["stock", "customer"] = "stock"
+
+
+@router.post("/orders/delay")
+async def delay_orders(payload: DelayIn, session: Session = Depends(get_db_sync)) -> dict:
+    """출고가 늦는 주문의 발송 지연을 마켓에 알린다. 가짜 송장 대신 이것을 쓴다 (가짜 송장은 판매 정지 사유)."""
+    try:
+        result = await order_actions.delay_orders(
+            session, payload.order_ids, payload.due_date, payload.reason, get_lotteon_client(), get_smartstore_client()
+        )
+    except orders_sync.OrderActionError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    except (LotteonError, NaverCommerceError) as exc:
+        raise HTTPException(502, str(exc)) from exc
+    return result
+
+
+class ResolveIn(BaseModel):
+    decision: Literal["blocked", "shipped"]
+    courier: str | None = None
+    tracking_no: str | None = None
+
+
+@router.post("/orders/{order_id}/claim/resolve")
+async def resolve_claim(order_id: int, payload: ResolveIn, session: Session = Depends(get_db_sync)) -> dict:
+    """발송 전 취소 요청 처리: 공급사가 출고를 막았으면 승인(blocked), 이미 출고했으면 송장 저장 + 거부(shipped)."""
+    order = session.get(AgriOrder, order_id)
+    if order is None:
+        raise HTTPException(404, "주문을 찾을 수 없습니다.")
+    try:
+        result = await order_actions.resolve_cancel_request(
+            session, order, payload.decision, get_lotteon_client(), get_smartstore_client(), payload.courier, payload.tracking_no
+        )
+    except orders_sync.OrderActionError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    except (LotteonError, NaverCommerceError) as exc:
+        raise HTTPException(502, str(exc)) from exc
+    session.refresh(order)
+    return {**result, "order": _order_dict(order, load_settings(session))}
 
 
 # ---------------------------------------------------------------- 롯데온 (상품 등록, 주문 연동)

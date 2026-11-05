@@ -311,11 +311,11 @@ async def approve_cancel(session: Session, client: BaseLotteonClient, order: Agr
     return order
 
 
-async def hold_cancel(session: Session, client: BaseLotteonClient, order: AgriOrder) -> AgriOrder:
-    """고객의 취소 요청을 거부한다 (이미 발송한 주문 등)."""
+async def hold_cancel(session: Session, client: BaseLotteonClient, order: AgriOrder, shipped: bool = False) -> AgriOrder:
+    """고객의 취소 요청을 거부한다 (이미 발송한 주문 등). shipped=True면 거부 사유를 '이미 발송'으로 보낸다."""
     _check_claim_state(order, client, "hold")
     claim, _ = await _open_claim(client, order)
-    reason = "901" if order.status == "shipped" else "902"  # 901 이미 발송 / 902 고객과 협의 후 거부
+    reason = "901" if shipped or order.status == "shipped" else "902"  # 901 이미 발송 / 902 고객과 협의 후 거부
     outcome = await client.hold_cancel(claim, reason)
     if not outcome.ok:
         raise LotteonError(outcome.message or "취소 거부가 거절되었습니다.")

@@ -32,7 +32,6 @@ def _settings():
     box["display_category_ids"]["fruit"] = "FC11130203"
     box["standard_category_ids"]["rice"] = "BC1"
     box["display_category_ids"]["rice"] = "FC1"
-    box["notice_codes"].update(name="0010", origin="0030")
     return settings
 
 
@@ -60,8 +59,12 @@ def test_complete_product_has_no_problems():
 
 def test_blank_settings_list_what_is_missing():
     text = " ".join(lo.collect_problems(_product(), pricing.merge_settings(None)))
-    for needle in ("거래처번호", "표준카테고리", "전시카테고리", "출고지번호", "회수(반품)지번호", "배송비정책번호", "배송가능지역코드", "상품정보고시", "고객센터"):
+    for needle in ("거래처번호", "표준카테고리", "전시카테고리", "출고지번호", "회수(반품)지번호", "배송비정책번호", "배송가능지역코드", "고객센터"):
         assert needle in text
+    assert "상품정보고시" not in text  # 농수축산물 항목코드는 PDF에서 확인해 기본값으로 넣어 두었다
+    cleared = _settings()
+    cleared["lotteon"]["notice_codes"] = {k: "" for k in cleared["lotteon"]["notice_codes"]}
+    assert any("상품정보고시" in p for p in lo.collect_problems(_product(), cleared))
 
 
 def test_import_origin_needs_import_code_and_rice_needs_label_fields():
@@ -82,7 +85,10 @@ def test_payload_has_required_fields_with_per_option_prices():
     assert payload["dcatLst"] == [{"mallCd": "LTON", "lfDcatNo": "FC11130203"}]
     assert payload["oplcCd"] == "KR" and payload["tdfDvsCd"] == "02"
     assert payload["pdItmsInfo"]["pdItmsCd"] == "20"
-    assert [a["pdArtlCd"] for a in payload["pdItmsInfo"]["pdItmsArtlLst"]] == ["0010", "0030"]
+    articles = {a["pdArtlCd"]: a["pdArtlCnts"] for a in payload["pdItmsInfo"]["pdItmsArtlLst"]}
+    assert set(articles) == {"1460", "0570", "0610", "1730", "1760", "1680", "1690", "1700", "0560", "0590", "1470", "0510"}
+    assert articles["1460"] == "충주 사과" and articles["1730"] == "국산(충북 충주)" and articles["0510"] == "1588-0000"
+    assert articles["0590"] == "냉장 보관" and articles["1700"] == "해당 없음"
     assert payload["dvProcTypCd"] == "LO_ENTP" and payload["dvPdTypCd"] == "GNRL" and payload["sndBgtNday"] == 2
     assert payload["owhpNo"] == "PLO1" and payload["rtrpNo"] == "PLO2" and payload["dvCstPolNo"] == "DLD1"
     assert payload["saveTypCd"] == "RFRG"
@@ -224,6 +230,35 @@ async def test_real_dispatch_sends_expected_body_and_reads_fail_list():
     assert first["odPrgsStepCd"] == "13" and first["dvCoCd"] == "0002" and first["invcNoList"] == ["111"]
     assert first["invcNbr"] == 1 and first["slQty"] == 2 and len(first["dvTrcStatDttm"]) == 14
     assert ok.ok and not bad.ok and "3021" in bad.message  # returnCode 가 0000 이어도 건별 실패를 읽는다
+
+
+async def test_real_delay_inform_sends_list_body_with_reason_and_date():
+    from app.integrations.markets.lotteon import DelayItem
+
+    seen = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["path"] = request.url.path
+        seen["body"] = json.loads(request.content)
+        return httpx.Response(200, json={"returnCode": "0000", "data": {"rsltCd": "0000"}})
+
+    due = datetime(2026, 11, 9, 12, 0, tzinfo=timezone(timedelta(hours=9)))
+    [outcome] = await _real(handler).inform_delay([DelayItem("100", 1, 1, "STK_SHTG", due)])
+    assert outcome.ok and seen["path"] == "/v1/openapi/delivery/v1/SellerDeliveryAppointmentInform"
+    assert isinstance(seen["body"], list)  # 설명서 예시: 최상위가 목록
+    assert seen["body"][0] == {
+        "odNo": "100", "odSeq": 1, "procSeq": 1, "orglProcSeq": "", "clmNo": "", "sndDlRsnCd": "STK_SHTG",
+        "sndDlRsnCnts": "", "sndAgrdDttm": "20261109120000",
+    }
+
+
+async def test_real_delay_over_max_period_is_reported():
+    from app.integrations.markets.lotteon import DelayItem
+
+    handler = lambda r: httpx.Response(200, json={"returnCode": "2004", "message": "발송약속일 최대기간 초과"})  # noqa: E731
+    with pytest.raises(LotteonError) as exc:
+        await _real(handler).inform_delay([DelayItem("100", 1, 1, "STK_SHTG", datetime.now(timezone.utc))])
+    assert "2004" in str(exc.value) and "최대기간" in str(exc.value)
 
 
 async def test_real_check_sendable_treats_6001_as_not_sendable():

@@ -106,6 +106,15 @@ class DispatchItem:
 
 
 @dataclass
+class DelayItem:
+    od_no: str
+    od_seq: int
+    proc_seq: int
+    reason_code: str  # STK_SHTG 재고부족 / CUST_REQ 고객요청 (설명서 138번)
+    due: datetime  # 발송약정일
+
+
+@dataclass
 class Outcome:
     key: str
     ok: bool
@@ -145,6 +154,10 @@ class BaseLotteonClient(ABC):
         """송장 입력 (발송완료 통보)."""
 
     @abstractmethod
+    async def inform_delay(self, items: list[DelayItem]) -> list[Outcome]:
+        """발송 지연 통보 (발송약정일 통보). 가짜 송장 대신 이것을 쓴다. 고객에게 알림이 간다."""
+
+    @abstractmethod
     async def fetch_cancel_claims(self, since: datetime, until: datetime, od_no: str | None = None) -> list[LotteonClaim]:
         """고객의 취소 요청·완료·철회 목록."""
 
@@ -170,6 +183,7 @@ class MockLotteonClient(BaseLotteonClient):
         self.claims: list[LotteonClaim] = []
         self.approved: list[str] = []  # 승인한 클레임번호
         self.held: list[tuple[str, str]] = []
+        self.delays: list[DelayItem] = []
         self.unsendable: set[str] = set()
         self.fail_dispatch_for: set[str] = set()
         self._counter = 0
@@ -217,6 +231,10 @@ class MockLotteonClient(BaseLotteonClient):
             self.dispatched.append(item)
             results.append(Outcome(key, True))
         return results
+
+    async def inform_delay(self, items: list[DelayItem]) -> list[Outcome]:
+        self.delays.extend(items)
+        return [Outcome(f"{i.od_no}-{i.od_seq}-{i.proc_seq}", True) for i in items]
 
     def add_cancel_request(self, order: LotteonOrder, reason_code: str = "106") -> LotteonClaim:
         """연습용으로 고객이 취소를 요청한 것처럼 만든다."""
@@ -396,6 +414,26 @@ class LotteonClient(BaseLotteonClient):
             Outcome(k, k not in failed, failed.get(k, ""))
             for k in (f"{i.od_no}-{i.od_seq}-{i.proc_seq}" for i in items)
         ]
+
+    async def inform_delay(self, items: list[DelayItem]) -> list[Outcome]:
+        if not items:
+            return []
+        payload = [
+            {
+                "odNo": i.od_no,
+                "odSeq": i.od_seq,
+                "procSeq": i.proc_seq,
+                "orglProcSeq": "",
+                "clmNo": "",
+                "sndDlRsnCd": i.reason_code,
+                "sndDlRsnCnts": "",
+                "sndAgrdDttm": kst_stamp(i.due),
+            }
+            for i in items
+        ]
+        # 요청 본문이 목록 자체다 (설명서 138번 예시). returnCode 2004 = 발송약속일 최대기간 초과.
+        await self._call("POST", "/v1/openapi/delivery/v1/SellerDeliveryAppointmentInform", "발송 지연 통보", json=payload)
+        return [Outcome(f"{i.od_no}-{i.od_seq}-{i.proc_seq}", True) for i in items]
 
     # ------------------------------------------------------------ 취소
     async def fetch_cancel_claims(self, since: datetime, until: datetime, od_no: str | None = None) -> list[LotteonClaim]:

@@ -113,6 +113,9 @@ class AgriOrder(Base, TimestampMixin):
     # 고객이 마켓에서 낸 취소·반품·교환 요청. claim_type: cancel / return / exchange, claim_status: requested / done / rejected
     claim_type: Mapped[str | None] = mapped_column(String(16), nullable=True)
     claim_status: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    # 출고가 늦어서 마켓에 "발송 지연"을 알린 기록 (가짜 송장 대신 이것을 쓴다). delay_reason: stock / customer
+    delayed_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    delay_reason: Mapped[str | None] = mapped_column(String(32), nullable=True)
 
     option: Mapped[AgriOption] = relationship(lazy="joined")
 

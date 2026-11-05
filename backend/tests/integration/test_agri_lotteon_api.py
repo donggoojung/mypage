@@ -41,7 +41,6 @@ async def _configure(client):
     box.update(tr_no="LO100", owhp_no="PLO1", rtrp_no="PLO2", dv_cst_pol_no="DLD1", dv_rgspr_grp_cd="GN101")
     box["standard_category_ids"]["fruit"] = "BC63080300"
     box["display_category_ids"]["fruit"] = "FC11130203"
-    box["notice_codes"].update(name="0010", origin="0030")
     res = await client.put("/api/agri/settings", json=settings)
     assert res.status_code == 200, res.text
 

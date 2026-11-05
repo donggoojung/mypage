@@ -34,9 +34,12 @@ NOTICE_LABELS = {
     "origin": "원산지",
     "packing": "포장일·생산연도",
     "storage": "보관방법",
-    "law": "관련법상 표시사항",
+    "law": "유전자변형·지리적 표시",
+    "livestock": "축산물 표시",
+    "import": "수입 농수축산물 문구",
     "phone": "소비자상담 전화번호",
     "composition": "상품구성",
+    "caution": "소비자 안전 주의사항",
 }
 
 
@@ -60,16 +63,20 @@ def storage_code(product: AgriProduct) -> str:
 
 def notice_values(product: AgriProduct, settings: dict, rows: list[dict]) -> dict[str, str]:
     labels = ", ".join(r["label"] for r in rows)
+    hours = settings.get("claim_hours") or 24
     return {
         "name": product.name,
         "weight": labels or "상세페이지 참고",
         "producer": product.producer or "",
         "origin": product.origin or "",
         "packing": product.packing_info or "주문 후 산지에서 포장하여 발송",
-        "storage": product.storage or "상세페이지 참고",
-        "law": "양곡관리법에 따른 양곡 표시사항 참고" if product.category == "rice" else "해당 없음",
-        "phone": settings.get("cs_phone", ""),
+        "law": "해당 없음" if product.category != "rice" else "양곡관리법에 따른 양곡 표시사항은 상세페이지를 참고하세요",
+        "livestock": "해당 없음",
+        "import": "해당 없음" if is_domestic(product) else "수입식품안전관리 특별법에 따른 수입신고를 필함",
         "composition": labels or "상세페이지 참고",
+        "storage": product.storage or "상세페이지 참고",
+        "caution": f"신선식품 특성상 받으신 뒤 {hours}시간 안에 상태를 확인해 주시고, 안내된 보관방법대로 보관해 주세요.",
+        "phone": settings.get("cs_phone", ""),
     }
 
 

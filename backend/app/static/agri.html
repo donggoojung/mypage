@@ -395,7 +395,7 @@
         <b>① 발주서 엑셀 받기</b>: 고른 주문을 공급사별 엑셀로 내려받고 "발주 완료"로 바꿉니다. 공급사에 보내면서 마지막 두 칸(택배사, 송장번호)을 채워 달라고 하세요.<br>
         <b>② 송장 엑셀 올리기</b>: 공급사가 채워서 보낸 엑셀을 올리면 송장번호가 주문에 들어갑니다.<br>
         <b>③ 스마트스토어 송장 엑셀 받기</b>: 판매자센터 [발송처리]의 엑셀 일괄발송에 올릴 파일입니다. 올린 뒤 [마켓 입력 끝]을 누르세요.<br>
-        출고가 늦어지면 <b>가짜 송장번호를 넣지 말고</b> 판매자센터의 "발송 지연" 처리를 하세요. 가짜 송장은 판매 정지 사유입니다.
+        출고가 늦어지면 <b>가짜 송장번호를 넣지 말고</b> [발송 지연 알리기]를 누르세요 (롯데온은 자동으로 알려 주고, 스마트스토어는 기록만 남기니 스마트스토어센터에서 직접 "발송지연 처리"를 해 주세요). 가짜 송장은 판매 정지 사유입니다. 발송 기한이 지난 주문에는 [발송 늦음] 표시가 뜹니다.
       </p>
       <div class="row" style="margin-bottom:10px">
         <button onclick="downloadPurchaseSheets()">① 발주서 엑셀 받기</button>
@@ -405,6 +405,7 @@
         </label>
         <button class="secondary" onclick="downloadSmartstoreInvoice()">③ 스마트스토어 송장 엑셀 받기</button>
         <button class="secondary" onclick="markMarketShipped()">마켓 입력 끝</button>
+        <button class="secondary" onclick="delayOrders()" title="출고가 늦을 때 가짜 송장 대신 쓰는 기능">발송 지연 알리기</button>
       </div>
       <div id="orders-msg" class="msg"></div>
       <div id="orders-area" class="table-wrap"><p class="empty">불러오는 중...</p></div>
@@ -461,7 +462,7 @@
       <div class="grid" id="set-lo-main"></div>
       <p class="help" style="margin-top:12px"><b>카테고리 번호</b> (품목마다 표준카테고리와 전시카테고리가 필요합니다)</p>
       <div class="grid" id="set-lo-cats"></div>
-      <p class="help" style="margin-top:12px"><b>상품정보고시 항목코드</b> (농수축산물 고시의 각 항목에 해당하는 롯데온 코드. 롯데온 설명서의 상품정보고시 PDF에서 확인합니다. 모르는 항목은 비워도 됩니다)</p>
+      <p class="help" style="margin-top:12px"><b>상품정보고시 항목코드</b> (농수축산물 고시 12개 항목의 롯데온 코드입니다. 롯데온 상품정보제공고시 PDF(23년 1월 개정 반영)에서 확인해 미리 넣어 두었습니다. 롯데온이 코드를 바꾸면 여기서 고칩니다)</p>
       <div class="grid" id="set-lo-notice"></div>
       <label class="hint" style="display:block;margin-top:10px"><input type="checkbox" id="set-lo-display" style="width:auto">
         등록하자마자 고객에게 보이게 하기 (꺼 두면 '전시 안 함' 상태로 올라가고, 판매자센터에서 확인한 뒤 켭니다)</label>
@@ -1128,7 +1129,7 @@ async function loadOrders() {
       <th class="num">결제 금액</th><th class="num">예상 이익</th><th>송장</th><th></th></tr>
     ${ORDERS.map(o => `<tr>
       <td><input type="checkbox" class="order-check" style="width:auto" value="${o.order_id}"></td>
-      <td><span class="badge ${esc(o.status)}">${esc(META.order_statuses[o.status])}</span>${claimBadge(o)}</td>
+      <td><span class="badge ${esc(o.status)}">${esc(META.order_statuses[o.status])}</span>${claimBadge(o)}${delayBadge(o)}</td>
       <td>${esc(META.markets[o.market])}${o.is_practice ? ` <span class="badge practice">연습</span>` : ""}<br><span class="help">${esc(o.market_order_no)}</span></td>
       <td>${esc(o.product_name)}<br><span class="help">${esc(o.option_label)} · ${esc(o.supplier_name)}</span></td>
       <td class="num">${o.quantity}</td>
@@ -1139,11 +1140,14 @@ async function loadOrders() {
       <td><div class="row" style="gap:4px">
         ${o.status !== "cancelled" && o.status !== "shipped" ? `<button class="secondary small" onclick="enterTracking(${o.order_id})">송장 직접 입력</button>` : ""}
         ${o.status !== "cancelled" ? `<button class="danger small" onclick="cancelOrder(${o.order_id})">취소</button>` : ""}
-        ${isLiveMarket(o.market) && o.claim_status === "requested" && o.claim_type === "cancel"
+        ${isLiveMarket(o.market) && o.claim_status === "requested" && o.claim_type === "cancel" && (o.status === "ordered" || o.status === "invoiced")
+          ? `<button class="danger small" onclick="resolveCancel(${o.order_id})">취소 처리 (공급사 확인)</button>
+             <button class="secondary small" onclick="copySupplierCancelText(${o.order_id})">공급사에 보낼 문구 복사</button>` : ""}
+        ${isLiveMarket(o.market) && o.claim_status === "requested" && o.claim_type === "cancel" && o.status === "new"
           ? `<button class="danger small" onclick="approveClaim(${o.order_id})">취소 승인</button>` : ""}
         ${o.market === "smartstore" && o.claim_status === "requested" && o.claim_type === "return"
           ? `<button class="danger small" onclick="approveClaim(${o.order_id})">반품 승인</button>` : ""}
-        ${o.market === "lotteon" && o.claim_status === "requested" && o.claim_type === "cancel"
+        ${o.market === "lotteon" && o.claim_status === "requested" && o.claim_type === "cancel" && o.status === "new"
           ? `<button class="secondary small" onclick="holdClaim(${o.order_id})">취소 거부</button>` : ""}
         ${o.market === "lotteon" && o.claim_status === "requested" && o.claim_type !== "cancel"
           ? `<span class="help" title="롯데온의 반품·교환은 승인 절차가 없습니다">공급사와 회수 일정을 잡으세요</span>` : ""}
@@ -1155,6 +1159,69 @@ async function loadOrders() {
 }
 
 const CLAIM_LABELS = { cancel: "취소", return: "반품", exchange: "교환" };
+
+function delayBadge(o) {
+  if (o.delayed_until && new Date(o.delayed_until) > new Date()) {
+    const d = new Date(o.delayed_until);
+    return `<br><span class="badge practice" title="마켓에 발송 지연을 알린 주문입니다">발송 지연 ~${d.getMonth() + 1}/${d.getDate()}</span>`;
+  }
+  if (o.overdue) return `<br><span class="badge claim" title="발송 기한이 지났습니다. 송장을 보내거나 [발송 지연 알리기]를 누르세요. 가짜 송장은 안 됩니다.">발송 늦음</span>`;
+  return "";
+}
+
+async function delayOrders() {
+  let ids = checkedOrderIds();
+  if (!ids.length) ids = ORDERS.filter(o => o.overdue).map(o => o.order_id);
+  if (!ids.length) { showMsg("orders-msg", "지연을 알릴 주문을 고르세요. (고르지 않으면 '발송 늦음' 주문 전체)", "err"); return; }
+  const base = new Date(); base.setDate(base.getDate() + 2);
+  const due = prompt(`${ids.length}건의 발송 예정일을 알려 주세요 (예: ${base.toISOString().slice(0, 10)}).\n고객에게 "발송이 늦어집니다" 알림이 갑니다. 롯데온은 최대 기간 제한이 있습니다.`, base.toISOString().slice(0, 10));
+  if (!due) return;
+  const reason = confirm("지연 사유가 '출고 준비 지연(재고·산지 사정)'이면 [확인], '고객 요청'이면 [취소]를 누르세요.") ? "stock" : "customer";
+  try {
+    const d = await api("/orders/delay", { method: "POST", body: { order_ids: ids, due_date: due.trim(), reason } });
+    const parts = [];
+    if (d.done.length) parts.push(`마켓에 발송 지연을 알린 주문 ${d.done.length}건`);
+    if (d.manual.length) parts.push(`기록만 남긴 주문 ${d.manual.length}건 — 스마트스토어센터에서 [발송지연 처리]를 직접 해 주세요 (스마트스토어는 자동 알림 주소를 아직 확인하지 못했습니다):\n` + d.manual.map(m => `- ${m.market_order_no}`).join("\n"));
+    if (d.failed.length) parts.push(`거절된 주문 ${d.failed.length}건:\n` + d.failed.map(f => `- ${f.market_order_no}: ${f.reason}`).join("\n"));
+    if (d.skipped.length) parts.push(`처리하지 않은 주문 ${d.skipped.length}건:\n` + d.skipped.map(s => `- ${s.market_order_no}: ${s.reason}`).join("\n"));
+    showMsg("orders-msg", parts.join("\n") || "처리할 주문이 없었습니다.", d.failed.length || d.skipped.length ? "err" : "ok");
+    loadOrders();
+  } catch (err) { showMsg("orders-msg", err.message, "err"); }
+}
+
+async function resolveCancel(orderId) {
+  const o = ORDERS.find(x => x.order_id === orderId);
+  const ui = MARKET_UI[o.market];
+  const blocked = confirm(`고객이 취소를 요청했는데, 이미 공급사에 발주한 주문입니다.\n먼저 공급사에 연락해서 출고를 막아 달라고 하세요. ([공급사에 보낼 문구 복사] 버튼)\n\n공급사가 "출고 전이라 막았다"고 확인해 줬나요?\n\n[확인] 막았다 → 취소를 승인합니다\n[취소] 아직 모르거나 이미 출고했다`);
+  try {
+    let r;
+    if (blocked) {
+      r = await api(`/orders/${orderId}/claim/resolve`, { method: "POST", body: { decision: "blocked" } });
+    } else {
+      if (!confirm("공급사가 이미 출고했다고 확인해 줬나요?\n[확인] 이미 출고했다 → 송장번호를 넣고 취소를 거부합니다\n[취소] 아직 확인하지 못했다 → 아무것도 하지 않습니다")) {
+        showMsg(ui.msg, "아직 처리하지 않았습니다. 공급사에 출고 여부를 먼저 확인해 주세요.", "info");
+        return;
+      }
+      const courier = prompt("택배사 (예: CJ대한통운, 롯데택배, 한진택배, 우체국택배)", o.courier || "");
+      if (!courier) return;
+      const tracking = prompt("송장번호 (공급사에게 받은 번호)", o.tracking_no || "");
+      if (!tracking) return;
+      r = await api(`/orders/${orderId}/claim/resolve`, { method: "POST", body: { decision: "shipped", courier: courier.trim(), tracking_no: tracking } });
+    }
+    showMsg(ui.msg, r.message, r.result === "manual" ? "info" : "ok");
+    loadOrders();
+  } catch (err) { showMsg(ui.msg, err.message, "err"); }
+}
+
+async function copySupplierCancelText(orderId) {
+  const o = ORDERS.find(x => x.order_id === orderId);
+  const text = `[주문 취소 요청] 아직 출고 전이면 출고를 멈춰 주세요.\n` +
+    `- 마켓 주문번호: ${o.market_order_no}\n- 상품: ${o.product_name} / ${o.option_label} × ${o.quantity}\n` +
+    `- 받는 분: ${o.receiver_name} (${o.receiver_phone})\n` +
+    `이미 출고했다면 택배사와 송장번호를 바로 알려 주세요.\n출고를 막았는지 아닌지 꼭 답 주세요. 고객 취소 요청이 걸려 있어서 급합니다.`;
+  try { await navigator.clipboard.writeText(text); showMsg(MARKET_UI[o.market].msg, "공급사에 보낼 문구를 복사했습니다. 카카오톡이나 문자에 붙여넣어 보내세요.\n\n" + text, "ok"); }
+  catch (e) { prompt("아래 문구를 복사해서 공급사에 보내세요", text); }
+}
 
 function claimBadge(o) {
   if (!o.claim_type || !o.claim_status) return "";
@@ -1370,8 +1437,9 @@ const LO_FIELDS = [
   ["send_days", "발송예정일수 (최대 3일)"], ["stock_quantity", "재고 수량 (옵션마다)"],
 ];
 const LO_NOTICE = {
-  name: "품목·명칭", weight: "중량·수량", producer: "생산자", origin: "원산지", packing: "제조(포장)연월일·생산연도",
-  storage: "보관방법", law: "관련법상 표시사항", phone: "소비자상담 전화번호", composition: "상품구성",
+  name: "품목·명칭", weight: "용량(중량)·수량·크기", producer: "생산자·수입자", origin: "원산지", packing: "제조연월일·소비기한",
+  law: "유전자변형·지리적 표시", livestock: "축산물 표시", import: "수입 농수축산물 문구", composition: "상품구성",
+  storage: "보관방법", caution: "소비자 안전 주의사항", phone: "소비자상담 전화번호",
 };
 
 function renderLotteonSettings() {
