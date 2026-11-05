@@ -43,9 +43,9 @@ def sellable_options(product: AgriProduct) -> list[AgriOption]:
     return [o for o in product.options if not o.is_soldout]
 
 
-def option_prices(product: AgriProduct, settings: dict) -> list[dict]:
-    """판매 가능한 옵션마다 스마트스토어 판매가와 예상 이익."""
-    rate = float(settings["fee_rates"].get(MARKET, 0))
+def option_prices(product: AgriProduct, settings: dict, market: str = MARKET) -> list[dict]:
+    """판매 가능한 옵션마다 마켓별 판매가와 예상 이익 (기본은 스마트스토어, 롯데온 등은 market 으로 지정)."""
+    rate = float(settings["fee_rates"].get(market, 0))
     min_profit = int(settings["min_profit"].get(product.category, settings["min_profit"].get("etc", 0)))
     unit = settings.get("price_unit", 100)
     rows = []

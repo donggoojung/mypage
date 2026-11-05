@@ -17,15 +17,18 @@ from sqlalchemy.orm import Session, object_session
 
 from app.core.config import get_settings as get_app_settings
 from app.core.database import get_db_sync
+from app.integrations.markets.lotteon import LotteonError, get_lotteon_client
 from app.integrations.markets.naver_commerce import NaverCommerceError, get_smartstore_client
 from app.models.agri import AgriListing, AgriOption, AgriOrder, AgriProduct, AgriSetting, AgriSupplier
 from app.services import agri_pricing as pricing
+from app.services import agri_lotteon as lotteon_products
+from app.services import agri_lotteon_orders as lotteon_orders
 from app.services import agri_smartstore as smartstore
 from app.services import agri_smartstore_orders as orders_sync
 
 router = APIRouter(prefix="/api/agri", tags=["agri"])
 
-MarketCode = Literal["smartstore", "coupang", "toss", "11st", "gmarket"]
+MarketCode = Literal["smartstore", "lotteon", "coupang", "toss", "11st", "gmarket"]
 CategoryCode = Literal["fruit", "vegetable", "rice", "grain", "etc"]
 ProductStatus = Literal["ready", "selling", "soldout", "stopped"]
 OrderMethod = Literal["excel", "auto", "kakao", "etc"]
@@ -50,6 +53,7 @@ def meta() -> dict:
         "product_statuses": pricing.PRODUCT_STATUSES,
         "order_methods": pricing.ORDER_METHODS,
         "smartstore_mode": "mock" if get_app_settings().use_mock_naver_commerce else "real",
+        "lotteon_mode": "mock" if get_app_settings().use_mock_lotteon else "real",
     }
 
 
@@ -68,14 +72,35 @@ class SmartstoreSettingsIn(BaseModel):
     display_on_register: bool = False
 
 
+class LotteonSettingsIn(BaseModel):
+    tr_grp_cd: str = "SR"
+    tr_no: str = ""
+    standard_category_ids: dict[str, str] = {}
+    display_category_ids: dict[str, str] = {}
+    owhp_no: str = ""
+    rtrp_no: str = ""
+    dv_cst_pol_no: str = ""
+    adtn_dv_cst_pol_no: str = ""
+    dv_rgspr_grp_cd: str = ""
+    hdc_cd: str = "0002"
+    rtng_hdc_cd: str = "0002"
+    oplc_domestic: str = "KR"
+    oplc_import: str = ""
+    send_days: int = Field(2, ge=0, le=3)
+    stock_quantity: int = Field(999, ge=0)
+    notice_codes: dict[str, str] = {}
+    display_on_register: bool = False
+
+
 class SettingsIn(BaseModel):
     fee_rates: dict[str, float]
     min_profit: dict[str, int]
     price_unit: int = Field(100, ge=1)
     cs_phone: str = ""
     claim_hours: int = Field(24, ge=1)
-    # 보내지 않으면 저장돼 있던 스마트스토어 등록 설정을 그대로 둔다.
+    # 보내지 않으면 저장돼 있던 마켓별 등록 설정을 그대로 둔다.
     smartstore: SmartstoreSettingsIn | None = None
+    lotteon: LotteonSettingsIn | None = None
 
 
 @router.put("/settings")
@@ -90,15 +115,25 @@ def put_settings(payload: SettingsIn, session: Session = Depends(get_db_sync)) -
         for category, number in payload.smartstore.leaf_category_ids.items():
             if category not in pricing.CATEGORIES or (number and not number.strip().isdigit()):
                 raise HTTPException(400, f"스마트스토어 카테고리 번호는 숫자만 넣어 주세요: {category} {number}")
+    if payload.lotteon:
+        for field in ("standard_category_ids", "display_category_ids"):
+            for category, number in getattr(payload.lotteon, field).items():
+                if category not in pricing.CATEGORIES or (number and not number.strip().isalnum()):
+                    raise HTTPException(400, f"롯데온 카테고리 번호는 글자와 숫자만 넣어 주세요: {category} {number}")
+        for key, code in payload.lotteon.notice_codes.items():
+            if code and not code.strip().isalnum():
+                raise HTTPException(400, f"롯데온 상품정보고시 항목코드는 글자와 숫자만 넣어 주세요: {key} {code}")
     row = session.get(AgriSetting, pricing.SETTINGS_KEY)
     if row is None:
         row = AgriSetting(key=pricing.SETTINGS_KEY, value={})
         session.add(row)
-    data = payload.model_dump(exclude={"smartstore"})
-    if payload.smartstore is not None:
-        data["smartstore"] = payload.smartstore.model_dump()
-    elif row.value.get("smartstore"):
-        data["smartstore"] = row.value["smartstore"]
+    data = payload.model_dump(exclude={"smartstore", "lotteon"})
+    for market in ("smartstore", "lotteon"):
+        section = getattr(payload, market)
+        if section is not None:
+            data[market] = section.model_dump()
+        elif row.value.get(market):
+            data[market] = row.value[market]
     row.value = data
     session.commit()
     return load_settings(session)
@@ -253,14 +288,27 @@ def _option_dict(o: AgriOption, category: str, settings: dict) -> dict:
     }
 
 
-def _product_dict(p: AgriProduct, settings: dict, listings: dict[int, AgriListing] | None = None) -> dict:
+LISTING_MARKETS = (smartstore.MARKET, lotteon_products.MARKET)
+
+
+def _listing_map(session: Session, product_ids: list[int] | None = None) -> dict[int, dict[str, AgriListing]]:
+    """상품마다 마켓별 등록 기록 {상품번호: {마켓: 기록}}."""
+    query = select(AgriListing).where(AgriListing.market.in_(LISTING_MARKETS))
+    if product_ids is not None:
+        query = query.where(AgriListing.product_id.in_(product_ids))
+    result: dict[int, dict[str, AgriListing]] = {}
+    for listing in session.execute(query).scalars():
+        result.setdefault(listing.product_id, {})[listing.market] = listing
+    return result
+
+
+def _product_dict(p: AgriProduct, settings: dict, listings: dict[int, dict[str, AgriListing]] | None = None) -> dict:
     if listings is None:
-        listings = {}
-        found = smartstore.get_listing(object_session(p), p.product_id) if object_session(p) else None
-        if found:
-            listings[p.product_id] = found
+        session = object_session(p)
+        listings = _listing_map(session, [p.product_id]) if session else {}
+    mine = listings.get(p.product_id, {})
     return {
-        "listings": {smartstore.MARKET: smartstore.listing_dict(listings.get(p.product_id))},
+        "listings": {market: smartstore.listing_dict(mine.get(market)) for market in LISTING_MARKETS},
         "product_id": p.product_id,
         "supplier_id": p.supplier_id,
         "supplier_name": p.supplier.name if p.supplier else None,
@@ -284,10 +332,7 @@ def _product_dict(p: AgriProduct, settings: dict, listings: dict[int, AgriListin
 def list_products(session: Session = Depends(get_db_sync)) -> list[dict]:
     settings = load_settings(session)
     rows = session.execute(select(AgriProduct).order_by(AgriProduct.product_id.desc())).unique().scalars().all()
-    listings = {
-        listing.product_id: listing
-        for listing in session.execute(select(AgriListing).where(AgriListing.market == smartstore.MARKET)).scalars()
-    }
+    listings = _listing_map(session)
     return [_product_dict(p, settings, listings) for p in rows]
 
 
@@ -346,11 +391,10 @@ def delete_product(product_id: int, session: Session = Depends(get_db_sync)) -> 
     product = session.get(AgriProduct, product_id)
     if product is None:
         raise HTTPException(404, "상품을 찾을 수 없습니다.")
-    listing = smartstore.get_listing(session, product_id)
-    if listing and not listing.is_mock:
-        raise HTTPException(
-            400, "스마트스토어에 등록된 상품입니다. 스마트스토어센터에서 상품을 내린 뒤 지울 수 있습니다."
-        )
+    for market, listing in _listing_map(session, [product_id]).get(product_id, {}).items():
+        if not listing.is_mock:
+            label = pricing.MARKETS.get(market, market)
+            raise HTTPException(400, f"{label}에 등록된 상품입니다. {label}에서 상품을 내린 뒤 지울 수 있습니다.")
     option_ids = [o.option_id for o in product.options]
     if option_ids:
         used = session.execute(
@@ -723,6 +767,134 @@ def smartstore_practice_claim(product_order_id: str, payload: PracticeClaimIn) -
             mo.claim_type = payload.kind.upper()
             mo.claim_status = f"{payload.kind.upper()}_REQUEST"
             return {"product_order_id": product_order_id}
+    raise HTTPException(404, "연습 주문을 찾을 수 없습니다. 서버를 다시 켰다면 연습 주문을 새로 만들어 주세요.")
+
+
+# ---------------------------------------------------------------- 롯데온 (상품 등록, 주문 연동)
+
+
+@router.get("/lotteon/connection")
+async def lotteon_connection() -> dict:
+    """롯데온과 연결이 되는지 확인한다 (읽기만 함). 연습 모드에서는 가짜 거래처가 나온다."""
+    client = get_lotteon_client()
+    try:
+        data = await client.identity()
+    except LotteonError as exc:
+        raise HTTPException(502, str(exc)) from exc
+    return {"mode": _mode(client), "identity": data}
+
+
+@router.get("/products/{product_id}/lotteon/preview")
+def lotteon_preview(product_id: int, session: Session = Depends(get_db_sync)) -> dict:
+    """롯데온에 아무것도 보내지 않고, 등록 전 점검 결과와 보낼 내용을 보여준다."""
+    product = session.get(AgriProduct, product_id)
+    if product is None:
+        raise HTTPException(404, "상품을 찾을 수 없습니다.")
+    result = lotteon_products.preview(product, load_settings(session), lotteon_products.get_listing(session, product_id))
+    result["mode"] = "mock" if get_app_settings().use_mock_lotteon else "real"
+    return result
+
+
+@router.post("/products/{product_id}/lotteon/register")
+async def lotteon_register(product_id: int, session: Session = Depends(get_db_sync)) -> dict:
+    """점검을 통과한 상품을 롯데온에 등록한다 (기본은 연습 모드라 실제 롯데온에는 올라가지 않는다)."""
+    product = session.get(AgriProduct, product_id)
+    if product is None:
+        raise HTTPException(404, "상품을 찾을 수 없습니다.")
+    client = get_lotteon_client()
+    try:
+        listing = await lotteon_products.register_product(session, product, load_settings(session), client)
+    except lotteon_products.LotteonProblems as exc:
+        raise HTTPException(400, "등록 전에 고칠 것이 있습니다: " + " / ".join(exc.problems)) from exc
+    except lotteon_products.AlreadyListed as exc:
+        raise HTTPException(400, str(exc)) from exc
+    except LotteonError as exc:
+        raise HTTPException(502, str(exc)) from exc
+    return {"listing": lotteon_products.listing_dict(listing), "mode": _mode(client)}
+
+
+@router.post("/lotteon/orders/sync")
+async def lotteon_sync_orders(payload: SyncIn | None = None, session: Session = Depends(get_db_sync)) -> dict:
+    """롯데온의 새 주문, 반품·교환 회수지시, 고객의 취소 요청을 가져온다.
+    새 주문은 가져온 뒤 롯데온에 '연동완료'를 알린다 (롯데온 규칙)."""
+    client = get_lotteon_client()
+    hours = payload.hours if payload else 24
+    try:
+        return await lotteon_orders.sync_orders(session, client, load_settings(session), hours)
+    except LotteonError as exc:
+        raise HTTPException(502, str(exc)) from exc
+
+
+@router.post("/lotteon/orders/dispatch")
+async def lotteon_dispatch_orders(payload: OrderIdsIn, session: Session = Depends(get_db_sync)) -> dict:
+    """송장을 받은 주문의 택배사·송장번호를 롯데온에 입력(발송완료 통보)한다."""
+    client = get_lotteon_client()
+    try:
+        result = await lotteon_orders.dispatch_orders(session, client, payload.order_ids)
+    except LotteonError as exc:
+        raise HTTPException(502, str(exc)) from exc
+    result["mode"] = _mode(client)
+    return result
+
+
+@router.post("/orders/{order_id}/lotteon/claim/approve")
+async def lotteon_approve_claim(
+    order_id: int, payload: ClaimApproveIn | None = None, session: Session = Depends(get_db_sync)
+) -> dict:
+    order = session.get(AgriOrder, order_id)
+    if order is None:
+        raise HTTPException(404, "주문을 찾을 수 없습니다.")
+    client = get_lotteon_client()
+    try:
+        await lotteon_orders.approve_cancel(session, client, order, bool(payload and payload.confirmed))
+    except orders_sync.NeedsConfirmation as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except orders_sync.OrderActionError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    except LotteonError as exc:
+        raise HTTPException(502, str(exc)) from exc
+    return {"order": _order_dict(order), "mode": _mode(client)}
+
+
+@router.post("/orders/{order_id}/lotteon/claim/hold")
+async def lotteon_hold_claim(order_id: int, session: Session = Depends(get_db_sync)) -> dict:
+    """고객의 취소 요청을 거부한다 (이미 발송한 주문 등)."""
+    order = session.get(AgriOrder, order_id)
+    if order is None:
+        raise HTTPException(404, "주문을 찾을 수 없습니다.")
+    client = get_lotteon_client()
+    try:
+        await lotteon_orders.hold_cancel(session, client, order)
+    except orders_sync.OrderActionError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    except LotteonError as exc:
+        raise HTTPException(502, str(exc)) from exc
+    return {"order": _order_dict(order), "mode": _mode(client)}
+
+
+@router.post("/lotteon/orders/practice")
+def lotteon_practice_order(payload: PracticeOrderIn, session: Session = Depends(get_db_sync)) -> dict:
+    """연습 모드에서 고객이 주문한 것처럼 가짜 주문을 만든다. [주문 가져오기]를 누르면 들어온다."""
+    client = get_lotteon_client()
+    try:
+        lo = lotteon_orders.create_practice_order(session, client, load_settings(session), payload.option_id, payload.quantity)
+    except orders_sync.OrderActionError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return {"product_order_id": lo.key, "paid_amount": lo.amount}
+
+
+@router.post("/lotteon/orders/practice/{key}/claim")
+def lotteon_practice_claim(key: str, payload: PracticeClaimIn) -> dict:
+    """연습 모드에서 고객이 취소를 요청한 것처럼 만든다 (승인 연습용)."""
+    client = get_lotteon_client()
+    if not client.is_mock:
+        raise HTTPException(400, "연습 모드에서만 쓸 수 있습니다.")
+    if payload.kind != "cancel":
+        raise HTTPException(400, "연습용으로는 취소 요청만 만들 수 있습니다.")
+    for order in client.orders:  # type: ignore[attr-defined]
+        if order.key == key:
+            client.add_cancel_request(order)  # type: ignore[attr-defined]
+            return {"product_order_id": key}
     raise HTTPException(404, "연습 주문을 찾을 수 없습니다. 서버를 다시 켰다면 연습 주문을 새로 만들어 주세요.")
 
 

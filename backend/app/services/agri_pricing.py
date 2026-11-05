@@ -14,6 +14,7 @@ from copy import deepcopy
 
 MARKETS: dict[str, str] = {
     "smartstore": "스마트스토어",
+    "lotteon": "롯데온",
     "coupang": "쿠팡",
     "toss": "토스쇼핑",
     "11st": "11번가",
@@ -54,6 +55,8 @@ ORDER_METHODS: dict[str, str] = {
 DEFAULT_SETTINGS: dict = {
     "fee_rates": {
         "smartstore": 6.4,
+        # 롯데온 판매수수료는 카테고리마다 5~15%로 알려져 있다. 농산물 값은 입점 후 판매자센터에서 확인해 고친다 (임시값).
+        "lotteon": 10.0,
         "coupang": 11.7,
         "toss": 8.8,
         "11st": 13.0,
@@ -81,6 +84,33 @@ DEFAULT_SETTINGS: dict = {
         # 네이버 원산지 코드. 국산 코드는 네이버 "원산지 코드 조회"로 확인이 필요하다 (미검증 기본값).
         "origin_area_code": "00",
         # false(기본값)면 실제 등록 시 "전시 중지" 상태로 올린다. 판매자센터에서 내용을 확인한 뒤 켠다.
+        "display_on_register": False,
+    },
+    # 롯데온 상품 등록·주문 연동에 쓰는 값. 비어 있는 항목은 등록 전 점검에서 알려준다.
+    # 번호들은 입점 후 판매자센터(또는 롯데온 API의 카테고리·출고지·배송비정책 조회)에서 확인해 넣는다.
+    "lotteon": {
+        "tr_grp_cd": "SR",  # 일반 셀러 (설명서 기준)
+        "tr_no": "",  # 거래처번호 (연결 확인 API로 알 수 있음)
+        "standard_category_ids": {"fruit": "", "vegetable": "", "rice": "", "grain": "", "etc": ""},
+        "display_category_ids": {"fruit": "", "vegetable": "", "rice": "", "grain": "", "etc": ""},
+        "owhp_no": "",  # 출고지번호
+        "rtrp_no": "",  # 회수(반품)지번호
+        "dv_cst_pol_no": "",  # 배송비정책번호
+        "adtn_dv_cst_pol_no": "",  # 추가배송비(제주·도서산간)정책번호 (없으면 비움)
+        "dv_rgspr_grp_cd": "",  # 배송가능지역코드 (공통코드 DV_RGSPR_GRP_CD 에서 확인)
+        "hdc_cd": "0002",  # 택배사 (0002 = CJ대한통운, 상품 등록 설명서 표 기준)
+        "rtng_hdc_cd": "0002",  # 반품 택배사
+        "oplc_domestic": "KR",  # 국산 원산지코드 (설명서 예시 값, 공통코드 OPLC_CD 로 확인 필요)
+        "oplc_import": "",  # 수입산 원산지코드 (필요할 때만)
+        "send_days": 2,  # 발송예정일수 (일반상품 최대 3일)
+        "stock_quantity": 999,
+        # 상품정보고시(농수축산물 20번) 항목코드. 설명서 본문에 없어서 입점 후 확인해 넣는다.
+        # name 품목·명칭 / weight 중량·수량 / producer 생산자 / origin 원산지 / packing 제조(포장)연월일
+        # storage 보관방법 / law 관련법상 표시사항 / phone 소비자상담 전화번호 / composition 상품구성
+        "notice_codes": {
+            "name": "", "weight": "", "producer": "", "origin": "", "packing": "",
+            "storage": "", "law": "", "phone": "", "composition": "",
+        },
         "display_on_register": False,
     },
 }
