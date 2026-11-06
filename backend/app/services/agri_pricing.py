@@ -86,6 +86,22 @@ DEFAULT_SETTINGS: dict = {
         # false(기본값)면 실제 등록 시 "전시 중지" 상태로 올린다. 판매자센터에서 내용을 확인한 뒤 켠다.
         "display_on_register": False,
     },
+    # 토스쇼핑 상품 등록·주문 연동에 쓰는 값. 번호들은 설정 화면의 "토스쇼핑 값 찾기"로 조회해서 넣는다.
+    "toss": {
+        # 품목별 최하위 카테고리 번호(isLeaf=true)와, 그 카테고리 템플릿에서 우리 옵션 이름(3kg 등)을 넣을 구매옵션 이름
+        "leaf_category_ids": {"fruit": "", "vegetable": "", "rice": "", "grain": "", "etc": ""},
+        "sales_option_keys": {"fruit": "", "vegetable": "", "rice": "", "grain": "", "etc": ""},
+        "notice_category_code": "",  # 정보제공 고시 카테고리 코드 (식품·농산물)
+        "exchange_refund_location_id": "",  # 교환반품지 ID
+        "delivery_location_id": "",  # 배송비 묶음 그룹 ID (없으면 비움 = 개별배송)
+        "prep_days": 3,  # 상품 준비 기간(영업일, 최대 14). 늦으면 페널티가 있으니 공급사 출고일보다 넉넉히
+        "jeju_fee": 3000,
+        "islands_fee": 3000,
+        "blocked_region_policy_id": 1,  # 1 = 제주·도서산간 포함 전 지역, 7 = 제주·도서산간 제외
+        "refund_one_way_fee": 3000,
+        "exchange_round_trip_fee": 6000,
+        "stock_quantity": 999,
+    },
     # 롯데온 상품 등록·주문 연동에 쓰는 값. 비어 있는 항목은 등록 전 점검에서 알려준다.
     # 번호들은 입점 후 판매자센터(또는 롯데온 API의 카테고리·출고지·배송비정책 조회)에서 확인해 넣는다.
     "lotteon": {

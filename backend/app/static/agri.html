@@ -358,6 +358,31 @@
       </div>
     </div>
 
+    <div class="card" id="ts-order-box">
+      <div class="head-row">
+        <h2>토스쇼핑 자동 연동 <span id="ts-mode-badge" class="badge"></span></h2>
+      </div>
+      <p class="help">
+        <b>주문 가져오기</b>: 토스쇼핑의 새 주문과 취소·반품·교환 요청을 가져옵니다 (읽기만 합니다).
+        <b>토스쇼핑은 고객이 "결제완료" 상태에서 취소하면 알림 없이 바로 환불됩니다.</b> 공급사에 발주하기 전에 한 번 더 [주문 가져오기]를 눌러 취소가 없었는지 확인하세요. 클레임 확인은 10~60분 간격이 권장됩니다.<br>
+        <b>송장 보내기</b>: 공급사에게 받은 송장번호를 토스쇼핑에 입력합니다. 입력하면 주문이 "배송중"이 되고 고객에게 알림이 갑니다. 거절된 주문은 자동으로 다시 보내지 않습니다.<br>
+        취소 요청이 온 주문은 공급사가 출고를 막았으면 <b>승인</b>, 이미 출고했으면 송장을 넣어 <b>거절</b>합니다 ([취소 처리 (공급사 확인)] 버튼). 반품은 [반품 승인] 뒤에 수거·환불을 토스쇼핑 파트너스에서 이어서 처리합니다.
+      </p>
+      <div class="row">
+        <button onclick="syncMarketOrders('toss')">토스쇼핑 주문 가져오기</button>
+        <button class="secondary" onclick="dispatchMarket('toss')">토스쇼핑에 송장 보내기</button>
+      </div>
+      <div id="ts-orders-msg" class="msg"></div>
+      <div id="ts-practice-box" class="hidden" style="margin-top:12px;padding-top:12px;border-top:1px dashed var(--line, #ccc)">
+        <p class="help"><b>연습용 주문 만들기</b> (연습 모드에서만 보입니다): 고객이 주문한 것처럼 가짜 주문을 만들고, 위의 [주문 가져오기]로 가져오는 연습을 합니다. 실제 토스쇼핑과는 상관없습니다.</p>
+        <div class="row">
+          <select id="ts-pr-option" style="max-width:360px"></select>
+          <input id="ts-pr-qty" type="number" min="1" value="1" style="width:70px">
+          <button class="secondary" onclick="makePracticeOrder('toss')">연습 주문 만들기</button>
+        </div>
+      </div>
+    </div>
+
     <div class="card" id="lo-order-box">
       <div class="head-row">
         <h2>롯데온 자동 연동 <span id="lo-mode-badge" class="badge"></span></h2>
@@ -450,6 +475,31 @@
       <h2>품목별 최소 이익 (원, 주문 1건 기준)</h2>
       <p class="help">과일 4,000원은 확정된 값입니다. 채소·쌀·잡곡·기타는 정하시기 전까지 임시로 3,000원입니다.</p>
       <div class="grid" id="set-profits"></div>
+    </div>
+    <div class="card">
+      <h2>토스쇼핑 등록 설정 <span class="badge practice">값 찾기로 확인</span></h2>
+      <p class="help">상품을 토스쇼핑에 올릴 때 쓰는 값입니다. 번호들은 아래 <b>값 찾기</b>에서 토스쇼핑에 물어봐서 확인합니다 (인증키가 있어야 합니다. 연습 모드에서는 가짜 값이 나옵니다).
+        순서: ① 카테고리 찾기로 품목의 최하위 카테고리 번호 확인 → ② 템플릿 보기에서 구매옵션 이름(예: 중량) 확인 → ③ 고시 카테고리 코드 확인 → ④ 교환·반품지 ID 확인.</p>
+      <div class="row" style="margin-bottom:10px">
+        <button class="secondary small" onclick="checkToss()">토스쇼핑 연결 확인</button>
+        <span id="ts-conn-msg" class="help"></span>
+      </div>
+      <div class="row" style="margin-bottom:6px">
+        <select id="ts-lookup-kind" style="width:auto">
+          <option value="categories">카테고리 찾기 (번호 비우면 1차, 입력하면 그 아래)</option>
+          <option value="template">카테고리 템플릿 보기 (최하위 카테고리 번호)</option>
+          <option value="notice-codes">고시 카테고리 코드 목록</option>
+          <option value="notice-items">고시 항목 보기 (고시 카테고리 코드)</option>
+          <option value="exchange-refund-locations">교환·반품지 ID 목록</option>
+          <option value="delivery-locations">배송비 묶음 그룹 ID 목록</option>
+          <option value="delivery-companies">택배사 이름 목록</option>
+        </select>
+        <input id="ts-lookup-id" placeholder="번호 또는 코드" style="width:160px">
+        <button class="secondary small" onclick="tossLookup()">조회</button>
+      </div>
+      <pre id="ts-lookup-out" class="help" style="max-height:220px;overflow:auto;white-space:pre-wrap;background:#fafbf9;padding:8px;border-radius:6px;display:none"></pre>
+      <div class="grid" id="set-ts-cats" style="margin-top:12px"></div>
+      <div class="grid" id="set-ts-main" style="margin-top:12px"></div>
     </div>
     <div class="card">
       <h2>롯데온 등록 설정 <span class="badge practice">입점 후 입력</span></h2>
@@ -772,10 +822,11 @@ async function loadProducts() {
       <div class="head-row" style="margin-bottom:6px">
         <div>
           <div class="title">${esc(p.name)} <span class="badge ${esc(p.status)}">${esc(META.product_statuses[p.status])}</span>
-            ${listingBadge(p.listings && p.listings.lotteon, "lotteon")}${listingBadge(p.listings && p.listings.smartstore, "smartstore")}</div>
+            ${listingBadge(p.listings && p.listings.lotteon, "lotteon")}${listingBadge(p.listings && p.listings.toss, "toss")}${listingBadge(p.listings && p.listings.smartstore, "smartstore")}</div>
           <div class="sub">${esc(p.supplier_name)} · ${esc(META.categories[p.category])} · 원산지 ${esc(p.origin || "(입력 필요)")}</div>
         </div>
         <div class="row">
+          <button class="small" onclick="openMarket('toss', ${p.product_id})">토스쇼핑 등록</button>
           <button class="small" onclick="openMarket('lotteon', ${p.product_id})">롯데온 등록</button>
           <button class="small" onclick="openMarket('smartstore', ${p.product_id})">스마트스토어 등록</button>
           <button class="secondary small" onclick="showNotice(${p.product_id})">표시 문구</button>
@@ -926,6 +977,11 @@ const MARKET_UI = {
     name: "롯데온", center: "롯데온 판매자센터", mode: "lotteon_mode",
     note: "※ 롯데온 설명서대로 만들었지만 아직 실제 키로 확인하지 못했습니다. 상품정보고시 항목코드, 원산지·배송가능지역 코드는 입점 후 확인해서 설정에 넣어야 합니다. 실제 모드로 처음 올릴 때는 상품 1개로 시작해서 판매자센터에서 결과를 꼭 확인하세요. 등록 뒤에는 롯데온의 상품 승인(검수)을 거칩니다.",
     msg: "lo-orders-msg", practice: "lo-practice-box", option: "lo-pr-option", qty: "lo-pr-qty", badge: "lo-mode-badge",
+  },
+  toss: {
+    name: "토스쇼핑", center: "토스쇼핑 파트너스", mode: "toss_mode",
+    note: "※ 토스쇼핑 개발 문서의 명세대로 만들었지만 아직 실제 키로 확인하지 못했습니다. 카테고리마다 정해진 구매옵션 이름·값에 맞아야 해서, 처음에는 거절 사유를 보고 설정을 고쳐야 할 수 있습니다. 등록 뒤에는 토스쇼핑 검수를 거쳐 노출됩니다.",
+    msg: "ts-orders-msg", practice: "ts-practice-box", option: "ts-pr-option", qty: "ts-pr-qty", badge: "ts-mode-badge",
   },
 };
 
@@ -1145,8 +1201,10 @@ async function loadOrders() {
              <button class="secondary small" onclick="copySupplierCancelText(${o.order_id})">공급사에 보낼 문구 복사</button>` : ""}
         ${isLiveMarket(o.market) && o.claim_status === "requested" && o.claim_type === "cancel" && o.status === "new"
           ? `<button class="danger small" onclick="approveClaim(${o.order_id})">취소 승인</button>` : ""}
-        ${o.market === "smartstore" && o.claim_status === "requested" && o.claim_type === "return"
+        ${(o.market === "smartstore" || o.market === "toss") && o.claim_status === "requested" && o.claim_type === "return"
           ? `<button class="danger small" onclick="approveClaim(${o.order_id})">반품 승인</button>` : ""}
+        ${o.market === "toss" && o.claim_status === "requested" && o.claim_type === "exchange"
+          ? `<span class="help">교환은 토스쇼핑 파트너스에서 처리하세요</span>` : ""}
         ${o.market === "lotteon" && o.claim_status === "requested" && o.claim_type === "cancel" && o.status === "new"
           ? `<button class="secondary small" onclick="holdClaim(${o.order_id})">취소 거부</button>` : ""}
         ${o.market === "lotteon" && o.claim_status === "requested" && o.claim_type !== "cancel"
@@ -1427,6 +1485,55 @@ function renderSettings() {
   setVal("set-ss-stock", ss.stock_quantity); setVal("set-ss-origin", ss.origin_area_code);
   document.getElementById("set-ss-display").checked = !!ss.display_on_register;
   renderLotteonSettings();
+  renderTossSettings();
+}
+
+const TS_FIELDS = [
+  ["notice_category_code", "고시 카테고리 코드 (식품·농산물)"], ["exchange_refund_location_id", "교환·반품지 ID"],
+  ["delivery_location_id", "배송비 묶음 그룹 ID (없으면 비움)"], ["prep_days", "상품 준비 기간 (영업일, 최대 14)"],
+  ["jeju_fee", "제주 추가 배송비 (원)"], ["islands_fee", "도서산간 추가 배송비 (원)"],
+  ["blocked_region_policy_id", "배송불가지역 (1=전 지역, 7=제주·도서산간 제외)"], ["refund_one_way_fee", "반품 편도 배송비 (원)"],
+  ["exchange_round_trip_fee", "교환 왕복 배송비 (원)"], ["stock_quantity", "재고 수량 (옵션마다)"],
+];
+const TS_NUMBERS = ["prep_days", "jeju_fee", "islands_fee", "blocked_region_policy_id", "refund_one_way_fee", "exchange_round_trip_fee", "stock_quantity"];
+
+function renderTossSettings() {
+  const ts = SETTINGS.toss || {};
+  document.getElementById("set-ts-cats").innerHTML = Object.entries(META.categories).map(([k, label]) =>
+    `<label class="field">${esc(label)} 최하위 카테고리 번호<input data-ts-cat="${k}" inputmode="numeric" value="${esc((ts.leaf_category_ids || {})[k])}"></label>` +
+    `<label class="field">${esc(label)} 구매옵션 이름 (예: 중량)<input data-ts-key="${k}" value="${esc((ts.sales_option_keys || {})[k])}"></label>`).join("");
+  document.getElementById("set-ts-main").innerHTML = TS_FIELDS.map(([k, label]) =>
+    `<label class="field">${esc(label)}<input data-ts="${k}" value="${esc(ts[k])}"></label>`).join("");
+}
+
+function collectTossSettings() {
+  const ts = { leaf_category_ids: {}, sales_option_keys: {} };
+  document.querySelectorAll("[data-ts-cat]").forEach(el => { ts.leaf_category_ids[el.dataset.tsCat] = el.value.trim(); });
+  document.querySelectorAll("[data-ts-key]").forEach(el => { ts.sales_option_keys[el.dataset.tsKey] = el.value.trim(); });
+  document.querySelectorAll("[data-ts]").forEach(el => {
+    const k = el.dataset.ts;
+    ts[k] = TS_NUMBERS.includes(k) ? (el.value === "" ? undefined : Number(el.value)) : el.value.trim();
+  });
+  return ts;
+}
+
+async function checkToss() {
+  const el = document.getElementById("ts-conn-msg");
+  el.textContent = "확인하는 중...";
+  try {
+    const d = await api("/toss/connection");
+    el.textContent = d.mode === "mock" ? "연습 모드: 가짜 응답입니다 (실제 토스쇼핑과는 연결하지 않았습니다)." : `연결됐습니다 (1차 카테고리 ${d.category_count}개를 읽었습니다).`;
+  } catch (err) { el.textContent = err.message; }
+}
+
+async function tossLookup() {
+  const out = document.getElementById("ts-lookup-out");
+  const kind = val("ts-lookup-kind"), id = val("ts-lookup-id");
+  out.style.display = "block"; out.textContent = "조회하는 중...";
+  try {
+    const d = await api(`/toss/lookup?kind=${encodeURIComponent(kind)}${id ? `&id=${encodeURIComponent(id)}` : ""}`);
+    out.textContent = (d.mode === "mock" ? "(연습 모드 가짜 값)\n" : "") + JSON.stringify(d.data, null, 2);
+  } catch (err) { out.textContent = err.message; }
 }
 
 const LO_FIELDS = [
@@ -1500,7 +1607,7 @@ async function saveSettings() {
   try {
     SETTINGS = await api("/settings", {
       method: "PUT",
-      body: { fee_rates, min_profit, price_unit: num("set-unit") || 100, cs_phone: val("set-phone"), claim_hours: num("set-claim") || 24, smartstore, lotteon: collectLotteonSettings() },
+      body: { fee_rates, min_profit, price_unit: num("set-unit") || 100, cs_phone: val("set-phone"), claim_hours: num("set-claim") || 24, smartstore, lotteon: collectLotteonSettings(), toss: collectTossSettings() },
     });
     renderSettings();
     showMsg("settings-msg", "저장했습니다. 상품 탭의 판매가가 새 설정으로 다시 계산됩니다.");

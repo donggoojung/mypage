@@ -33,6 +33,12 @@ class Settings(BaseSettings):
     # 농산물 롯데온(롯데ON Open API) 상품 등록·주문 연동. true(기본값)면 가짜 응답으로 동작한다.
     # 실제로 쓰려면 롯데온 입점 후 판매자센터에서 서버 IP를 등록하고 인증키를 발급받아 LOTTEON_API_KEY에 넣은 뒤 false로 바꾼다.
     use_mock_lotteon: bool = True
+    # 농산물 토스쇼핑 상품 등록·주문 연동. true(기본값)면 가짜 응답으로 동작한다.
+    # 실제로 쓰려면 토스쇼핑 파트너스에서 IP를 등록하고 Access/Secret Key를 발급받아 TOSS_ACCESS_KEY/TOSS_SECRET_KEY에 넣은 뒤 false로 바꾼다.
+    use_mock_toss: bool = True
+    toss_env: str = "prod"  # prod 또는 alpha(테스트 환경, 별도 신청 필요)
+    toss_access_key: str = ""
+    toss_secret_key: str = ""
 
     # 오픈마켓 API 키
     lotteon_api_key: str = ""

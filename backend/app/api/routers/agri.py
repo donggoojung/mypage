@@ -19,9 +19,12 @@ from app.core.config import get_settings as get_app_settings
 from app.core.database import get_db_sync
 from app.integrations.markets.lotteon import LotteonError, get_lotteon_client
 from app.integrations.markets.naver_commerce import NaverCommerceError, get_smartstore_client
+from app.integrations.markets.toss import TossError, get_toss_client
 from app.models.agri import AgriListing, AgriOption, AgriOrder, AgriProduct, AgriSetting, AgriSupplier
 from app.services import agri_pricing as pricing
 from app.services import agri_order_actions as order_actions
+from app.services import agri_toss as toss_products
+from app.services import agri_toss_orders as toss_orders
 from app.services import agri_lotteon as lotteon_products
 from app.services import agri_lotteon_orders as lotteon_orders
 from app.services import agri_smartstore as smartstore
@@ -55,6 +58,7 @@ def meta() -> dict:
         "order_methods": pricing.ORDER_METHODS,
         "smartstore_mode": "mock" if get_app_settings().use_mock_naver_commerce else "real",
         "lotteon_mode": "mock" if get_app_settings().use_mock_lotteon else "real",
+        "toss_mode": "mock" if get_app_settings().use_mock_toss else "real",
     }
 
 
@@ -93,6 +97,21 @@ class LotteonSettingsIn(BaseModel):
     display_on_register: bool = False
 
 
+class TossSettingsIn(BaseModel):
+    leaf_category_ids: dict[str, str] = {}
+    sales_option_keys: dict[str, str] = {}
+    notice_category_code: str = ""
+    exchange_refund_location_id: str = ""
+    delivery_location_id: str = ""
+    prep_days: int = Field(3, ge=1, le=14)
+    jeju_fee: int = Field(3000, ge=0)
+    islands_fee: int = Field(3000, ge=0)
+    blocked_region_policy_id: int = Field(1, ge=1)
+    refund_one_way_fee: int = Field(3000, ge=0)
+    exchange_round_trip_fee: int = Field(6000, ge=0)
+    stock_quantity: int = Field(999, ge=0)
+
+
 class SettingsIn(BaseModel):
     fee_rates: dict[str, float]
     min_profit: dict[str, int]
@@ -102,6 +121,7 @@ class SettingsIn(BaseModel):
     # 보내지 않으면 저장돼 있던 마켓별 등록 설정을 그대로 둔다.
     smartstore: SmartstoreSettingsIn | None = None
     lotteon: LotteonSettingsIn | None = None
+    toss: TossSettingsIn | None = None
 
 
 @router.put("/settings")
@@ -124,12 +144,20 @@ def put_settings(payload: SettingsIn, session: Session = Depends(get_db_sync)) -
         for key, code in payload.lotteon.notice_codes.items():
             if code and not code.strip().isalnum():
                 raise HTTPException(400, f"롯데온 상품정보고시 항목코드는 글자와 숫자만 넣어 주세요: {key} {code}")
+    if payload.toss:
+        for category, number in payload.toss.leaf_category_ids.items():
+            if category not in pricing.CATEGORIES or (number and not number.strip().isdigit()):
+                raise HTTPException(400, f"토스쇼핑 카테고리 번호는 숫자만 넣어 주세요: {category} {number}")
+        for key in ("exchange_refund_location_id", "delivery_location_id"):
+            value = getattr(payload.toss, key)
+            if value and not value.strip().isdigit():
+                raise HTTPException(400, f"토스쇼핑 {key}는 숫자만 넣어 주세요: {value}")
     row = session.get(AgriSetting, pricing.SETTINGS_KEY)
     if row is None:
         row = AgriSetting(key=pricing.SETTINGS_KEY, value={})
         session.add(row)
-    data = payload.model_dump(exclude={"smartstore", "lotteon"})
-    for market in ("smartstore", "lotteon"):
+    data = payload.model_dump(exclude={"smartstore", "lotteon", "toss"})
+    for market in ("smartstore", "lotteon", "toss"):
         section = getattr(payload, market)
         if section is not None:
             data[market] = section.model_dump()
@@ -289,7 +317,7 @@ def _option_dict(o: AgriOption, category: str, settings: dict) -> dict:
     }
 
 
-LISTING_MARKETS = (smartstore.MARKET, lotteon_products.MARKET)
+LISTING_MARKETS = (smartstore.MARKET, lotteon_products.MARKET, toss_products.MARKET)
 
 
 def _listing_map(session: Session, product_ids: list[int] | None = None) -> dict[int, dict[str, AgriListing]]:
@@ -789,11 +817,11 @@ async def delay_orders(payload: DelayIn, session: Session = Depends(get_db_sync)
     """출고가 늦는 주문의 발송 지연을 마켓에 알린다. 가짜 송장 대신 이것을 쓴다 (가짜 송장은 판매 정지 사유)."""
     try:
         result = await order_actions.delay_orders(
-            session, payload.order_ids, payload.due_date, payload.reason, get_lotteon_client(), get_smartstore_client()
+            session, payload.order_ids, payload.due_date, payload.reason, get_lotteon_client(), get_smartstore_client(), get_toss_client()
         )
     except orders_sync.OrderActionError as exc:
         raise HTTPException(400, str(exc)) from exc
-    except (LotteonError, NaverCommerceError) as exc:
+    except (LotteonError, NaverCommerceError, TossError) as exc:
         raise HTTPException(502, str(exc)) from exc
     return result
 
@@ -812,11 +840,11 @@ async def resolve_claim(order_id: int, payload: ResolveIn, session: Session = De
         raise HTTPException(404, "주문을 찾을 수 없습니다.")
     try:
         result = await order_actions.resolve_cancel_request(
-            session, order, payload.decision, get_lotteon_client(), get_smartstore_client(), payload.courier, payload.tracking_no
+            session, order, payload.decision, get_lotteon_client(), get_smartstore_client(), payload.courier, payload.tracking_no, get_toss_client()
         )
     except orders_sync.OrderActionError as exc:
         raise HTTPException(400, str(exc)) from exc
-    except (LotteonError, NaverCommerceError) as exc:
+    except (LotteonError, NaverCommerceError, TossError) as exc:
         raise HTTPException(502, str(exc)) from exc
     session.refresh(order)
     return {**result, "order": _order_dict(order, load_settings(session))}
@@ -947,6 +975,168 @@ def lotteon_practice_claim(key: str, payload: PracticeClaimIn) -> dict:
         if order.key == key:
             client.add_cancel_request(order)  # type: ignore[attr-defined]
             return {"product_order_id": key}
+    raise HTTPException(404, "연습 주문을 찾을 수 없습니다. 서버를 다시 켰다면 연습 주문을 새로 만들어 주세요.")
+
+
+# ---------------------------------------------------------------- 토스쇼핑 (상품 등록, 주문 연동)
+
+
+@router.get("/toss/connection")
+async def toss_connection() -> dict:
+    """토스쇼핑과 연결이 되는지 확인한다 (카테고리 목록을 읽어 본다). 연습 모드에서는 가짜 값이 나온다."""
+    client = get_toss_client()
+    try:
+        items = await client.categories(None)
+    except TossError as exc:
+        raise HTTPException(502, str(exc)) from exc
+    return {"mode": _mode(client), "category_count": len(items)}
+
+
+@router.get("/toss/lookup")
+async def toss_lookup(kind: str, id: str | None = None) -> dict:
+    """설정에 넣을 번호를 토스쇼핑에서 찾아 보여준다 (읽기만 한다)."""
+    client = get_toss_client()
+    try:
+        if kind == "categories":
+            data = await client.categories(int(id) if id and id.isdigit() else None)
+        elif kind == "template":
+            data = await client.category_template(int(id or 0))
+        elif kind == "notice-codes":
+            data = await client.notice_category_codes()
+        elif kind == "notice-items":
+            data = await client.notice_items(id or "")
+        elif kind == "delivery-locations":
+            data = await client.delivery_locations()
+        elif kind == "exchange-refund-locations":
+            data = await client.exchange_refund_locations()
+        elif kind == "delivery-companies":
+            data = await client.delivery_companies()
+        else:
+            raise HTTPException(400, "알 수 없는 조회 종류입니다.")
+    except TossError as exc:
+        raise HTTPException(502, str(exc)) from exc
+    return {"mode": _mode(client), "kind": kind, "data": data}
+
+
+@router.get("/products/{product_id}/toss/preview")
+async def toss_preview(product_id: int, session: Session = Depends(get_db_sync)) -> dict:
+    """토스쇼핑에 아무것도 올리지 않고, 등록 전 점검 결과와 보낼 내용을 보여준다."""
+    product = session.get(AgriProduct, product_id)
+    if product is None:
+        raise HTTPException(404, "상품을 찾을 수 없습니다.")
+    client = get_toss_client()
+    result = await toss_products.preview(product, load_settings(session), toss_products.get_listing(session, product_id), client)
+    result["mode"] = _mode(client)
+    return result
+
+
+@router.post("/products/{product_id}/toss/register")
+async def toss_register(product_id: int, session: Session = Depends(get_db_sync)) -> dict:
+    """점검을 통과한 상품을 토스쇼핑에 등록한다 (기본은 연습 모드). 등록 뒤에는 토스쇼핑 검수를 거쳐 노출된다."""
+    product = session.get(AgriProduct, product_id)
+    if product is None:
+        raise HTTPException(404, "상품을 찾을 수 없습니다.")
+    client = get_toss_client()
+    try:
+        listing = await toss_products.register_product(session, product, load_settings(session), client)
+    except toss_products.TossProblems as exc:
+        raise HTTPException(400, "등록 전에 고칠 것이 있습니다: " + " / ".join(exc.problems)) from exc
+    except toss_products.AlreadyListed as exc:
+        raise HTTPException(400, str(exc)) from exc
+    except TossError as exc:
+        raise HTTPException(502, str(exc)) from exc
+    return {"listing": toss_products.listing_dict(listing), "mode": _mode(client)}
+
+
+@router.post("/toss/orders/sync")
+async def toss_sync_orders(payload: SyncIn | None = None, session: Session = Depends(get_db_sync)) -> dict:
+    """토스쇼핑의 새 주문과 취소·반품·교환 요청을 가져온다 (읽기만 한다)."""
+    client = get_toss_client()
+    hours = payload.hours if payload else 24
+    try:
+        return await toss_orders.sync_orders(session, client, load_settings(session), hours)
+    except TossError as exc:
+        raise HTTPException(502, str(exc)) from exc
+
+
+@router.post("/toss/orders/dispatch")
+async def toss_dispatch_orders(payload: OrderIdsIn, session: Session = Depends(get_db_sync)) -> dict:
+    """송장을 받은 주문의 택배사·송장번호를 토스쇼핑에 입력한다 (주문이 배송중이 된다)."""
+    client = get_toss_client()
+    try:
+        result = await toss_orders.dispatch_orders(session, client, payload.order_ids)
+    except TossError as exc:
+        raise HTTPException(502, str(exc)) from exc
+    result["mode"] = _mode(client)
+    return result
+
+
+@router.post("/orders/{order_id}/toss/claim/approve")
+async def toss_approve_claim(order_id: int, payload: ClaimApproveIn | None = None, session: Session = Depends(get_db_sync)) -> dict:
+    """고객의 취소(또는 반품) 요청을 승인한다."""
+    order = session.get(AgriOrder, order_id)
+    if order is None:
+        raise HTTPException(404, "주문을 찾을 수 없습니다.")
+    client = get_toss_client()
+    confirmed = bool(payload and payload.confirmed)
+    try:
+        if order.claim_type == "return":
+            await toss_orders.approve_return(session, client, order, confirmed)
+        else:
+            await toss_orders.approve_cancel(session, client, order, confirmed)
+    except orders_sync.NeedsConfirmation as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except orders_sync.OrderActionError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    except TossError as exc:
+        raise HTTPException(502, str(exc)) from exc
+    return {"order": _order_dict(order), "mode": _mode(client)}
+
+
+class RejectIn(BaseModel):
+    courier: str
+    tracking_no: str
+
+
+@router.post("/orders/{order_id}/toss/claim/reject")
+async def toss_reject_claim(order_id: int, payload: RejectIn, session: Session = Depends(get_db_sync)) -> dict:
+    """고객의 취소 요청을 거절한다 (공급사가 이미 출고했을 때). 택배사·송장번호를 함께 보낸다."""
+    order = session.get(AgriOrder, order_id)
+    if order is None:
+        raise HTTPException(404, "주문을 찾을 수 없습니다.")
+    client = get_toss_client()
+    try:
+        await toss_orders.reject_cancel(session, client, order, payload.courier, payload.tracking_no)
+    except orders_sync.OrderActionError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    except TossError as exc:
+        raise HTTPException(502, str(exc)) from exc
+    return {"order": _order_dict(order), "mode": _mode(client)}
+
+
+@router.post("/toss/orders/practice")
+def toss_practice_order(payload: PracticeOrderIn, session: Session = Depends(get_db_sync)) -> dict:
+    """연습 모드에서 고객이 주문한 것처럼 가짜 주문을 만든다. [주문 가져오기]를 누르면 들어온다."""
+    client = get_toss_client()
+    try:
+        to = toss_orders.create_practice_order(session, client, load_settings(session), payload.option_id, payload.quantity)
+    except orders_sync.OrderActionError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return {"product_order_id": to.order_product_id, "paid_amount": to.price}
+
+
+@router.post("/toss/orders/practice/{order_product_id}/claim")
+def toss_practice_claim(order_product_id: str, payload: PracticeClaimIn) -> dict:
+    """연습 모드에서 고객이 취소를 요청한 것처럼 만든다 (승인·거절 연습용)."""
+    client = get_toss_client()
+    if not client.is_mock:
+        raise HTTPException(400, "연습 모드에서만 쓸 수 있습니다.")
+    if payload.kind != "cancel":
+        raise HTTPException(400, "연습용으로는 취소 요청만 만들 수 있습니다.")
+    for order in client.orders:  # type: ignore[attr-defined]
+        if order.order_product_id == order_product_id:
+            client.add_cancel_request(order)  # type: ignore[attr-defined]
+            return {"product_order_id": order_product_id}
     raise HTTPException(404, "연습 주문을 찾을 수 없습니다. 서버를 다시 켰다면 연습 주문을 새로 만들어 주세요.")
 
 

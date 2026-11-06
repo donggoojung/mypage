@@ -20,9 +20,11 @@ from sqlalchemy.orm import Session
 
 from app.integrations.markets.lotteon import BaseLotteonClient, DelayItem, LotteonError, split_key
 from app.integrations.markets.naver_commerce import BaseSmartstoreClient
+from app.integrations.markets.toss import BaseTossClient, TossError
 from app.models.agri import AgriOrder
 from app.services import agri_lotteon_orders as lotteon_orders
 from app.services import agri_smartstore_orders as smartstore_orders
+from app.services import agri_toss_orders as toss_orders
 from app.services.agri_smartstore_orders import OrderActionError
 
 KST = timezone(timedelta(hours=9))
@@ -72,8 +74,9 @@ async def delay_orders(
     reason: str,
     lotteon_client: BaseLotteonClient,
     smartstore_client: BaseSmartstoreClient,
+    toss_client: BaseTossClient | None = None,
 ) -> dict:
-    """주문들의 발송 지연을 알린다 (롯데온은 자동, 스마트스토어는 안내만)."""
+    """주문들의 발송 지연을 알린다 (롯데온·토스쇼핑은 자동, 스마트스토어는 안내만)."""
     if reason not in DELAY_REASON_LABELS:
         raise OrderActionError("지연 사유를 골라 주세요.")
     due = parse_due(due_text)
@@ -84,6 +87,7 @@ async def delay_orders(
         return {"order_id": order.order_id, "market": order.market, "market_order_no": order.market_order_no, **extra}
 
     lotteon_items: list[DelayItem] = []
+    toss_items: list[AgriOrder] = []
     by_key: dict[str, AgriOrder] = {}
     for order in sorted(orders, key=lambda o: o.order_id):
         if order.status in ("shipped", "cancelled"):
@@ -98,6 +102,17 @@ async def delay_orders(
             od_no, od_seq, proc_seq = split_key(order.market_order_no)
             lotteon_items.append(DelayItem(od_no, od_seq, proc_seq, LOTTEON_DELAY_REASONS[reason], due))
             by_key[order.market_order_no] = order
+        elif order.market == "toss" and toss_client is not None:
+            mismatch = toss_orders._mode_mismatch(order, toss_client)
+            days = (due.date() - datetime.now(KST).date()).days
+            if mismatch:
+                result["skipped"].append(row(order, reason=mismatch))
+            elif order.delayed_until is not None:
+                result["skipped"].append(row(order, reason="이미 발송 지연을 알린 주문입니다. 토스쇼핑은 주문 상품당 한 번만 할 수 있습니다."))
+            elif not 1 <= days <= 32:
+                result["skipped"].append(row(order, reason="토스쇼핑은 발송 예정일을 오늘 기준 1일 이상 32일 이하로만 정할 수 있습니다."))
+            else:
+                toss_items.append(order)
         elif order.market == "smartstore":
             mismatch = smartstore_orders._mode_mismatch(order, smartstore_client)
             if mismatch:
@@ -123,6 +138,22 @@ async def delay_orders(
                 result["done"].append(row(order))
             else:
                 result["failed"].append(row(order, reason=outcome.message))
+    if toss_items:
+        # 토스쇼핑 발송 지연 사유는 "상품준비중"(READY_PRODUCT)과 "주문제작 정보 미입력" 둘뿐이라 항상 앞의 것을 쓴다.
+        try:
+            outcomes = await toss_client.delay_shipping([o.market_order_no for o in toss_items], due, "READY_PRODUCT")
+        except TossError as exc:
+            outcomes = []
+            for order in toss_items:
+                result["failed"].append(row(order, reason=str(exc)))
+        by_id = {o.market_order_no: o for o in toss_items}
+        for outcome in outcomes:
+            order = by_id[outcome.key]
+            if outcome.ok:
+                _record_delay(order, due, reason, "토스쇼핑에 발송 지연을 알림")
+                result["done"].append(row(order))
+            else:
+                result["failed"].append(row(order, reason=outcome.message))
     session.commit()
     return result
 
@@ -141,6 +172,7 @@ async def resolve_cancel_request(
     smartstore_client: BaseSmartstoreClient,
     courier: str | None = None,
     tracking_no: str | None = None,
+    toss_client: BaseTossClient | None = None,
 ) -> dict:
     """발송 전 취소 요청을 '공급사 출고 여부'에 따라 처리한다.
 
@@ -149,12 +181,14 @@ async def resolve_cancel_request(
     """
     if order.claim_status != "requested" or order.claim_type != "cancel":
         raise OrderActionError("처리할 취소 요청이 없습니다. 먼저 [주문 가져오기]를 눌러 보세요.")
-    if order.market not in ("lotteon", "smartstore"):
+    if order.market not in ("lotteon", "smartstore", "toss"):
         raise OrderActionError("이 마켓은 아직 자동 처리를 지원하지 않습니다. 판매자센터에서 직접 처리하세요.")
 
     if decision == "blocked":
         if order.market == "lotteon":
             await lotteon_orders.approve_cancel(session, lotteon_client, order, confirmed=True)
+        elif order.market == "toss":
+            await toss_orders.approve_cancel(session, toss_client, order, confirmed=True)
         else:
             await smartstore_orders.approve_claim(session, smartstore_client, order, confirmed=True)
         _append_memo(order, "공급사가 출고를 막은 것을 확인하고 취소를 승인함")
@@ -167,6 +201,12 @@ async def resolve_cancel_request(
     tracking = re.sub(r"[^0-9A-Za-z]", "", tracking_no or order.tracking_no or "")
     if not courier or not tracking:
         raise OrderActionError("이미 출고했다면 택배사와 송장번호를 넣어 주세요. (공급사에게 받으세요)")
+    if order.market == "toss":
+        # 토스쇼핑은 취소 거절 때 송장을 함께 받고, 거절하면 주문이 바로 배송중이 된다.
+        await toss_orders.reject_cancel(session, toss_client, order, courier, tracking)
+        _append_memo(order, f"공급사가 이미 출고함({courier} {tracking}) — 취소 요청을 거절하고 송장 등록")
+        session.commit()
+        return {"result": "held", "message": "취소 요청을 거절하고 송장을 등록했습니다. 토스쇼핑에서 이 주문은 배송중이 됩니다."}
     order.courier, order.tracking_no = courier, tracking
     if order.status in ("new", "ordered"):
         order.status = "invoiced"
